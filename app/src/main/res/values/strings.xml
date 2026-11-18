@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Appunti AI</string>
+    <string name="share_audio_label">Trascrivi con Appunti</string>
+    <string name="share_text_label">Salva in Appunti</string>
+</resources>
