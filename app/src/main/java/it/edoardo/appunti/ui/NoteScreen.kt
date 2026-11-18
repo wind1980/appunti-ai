@@ -2,6 +2,10 @@ package it.edoardo.appunti.ui
 
 import android.content.ClipboardManager
 import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Description
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.heightIn
@@ -124,8 +128,21 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
     val hasText = paragraphs.isNotEmpty()
 
     // 0 = Riepilogo AI, 1 = Trascrizione. Si apre sulla trascrizione finché non ci sono risposte.
+    // 0 = Riepilogo AI, 1 = Grafica, 2 = Trascrizione. Si apre sulla trascrizione finché non ci sono risposte.
     var tab by rememberSaveable { mutableIntStateOf(-1) }
-    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) 1 else 0
+    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) 2 else 0
+    val textResponses = responses.filter { viewKindOf(it) == null }
+    val visualResponses = responses.filter { viewKindOf(it) != null }
+    val addFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                NotesRepo.saveFile(context, n.id, uri)
+                tab = 1
+            } catch (e: Exception) {
+                Toast.makeText(context, "Impossibile aggiungere il file: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -157,7 +174,8 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
         // Sempre una richiesta completa (comando + trascrizione): Claude non torna sulla chat
         // precedente quando lo si riapre da fuori, quindi ogni invio deve bastare da solo.
         ClaudeShare.share(context, n, kind, question)
-        tab = 0 // al ritorno si è già sulla scheda dove incollare la risposta
+        // Al ritorno si è già sulla scheda giusta: Grafica per mappe e infografiche, Riepilogo per il resto.
+        tab = if (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) 1 else 0
     }
 
     var pasteMenu by remember { mutableStateOf(false) }
@@ -174,7 +192,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                 ).show()
             } else {
                 clip = null
-                tab = 0
+                tab = if (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) 1 else 0
                 Toast.makeText(context, "Salvata" + (kind?.let { " come ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
                 if (kind == PromptKind.MINDMAP && !MindMap.looksLikeMap(text)) {
                     Toast.makeText(context, "Non sembra una mappa a livelli: la vedrai come testo", Toast.LENGTH_LONG).show()
@@ -276,7 +294,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
             }
             item {
                 SegmentedTabs(
-                    labels = listOf("Riepilogo AI", "Trascrizione"),
+                    labels = listOf("Riepilogo AI", "Grafica", "Trascrizione"),
                     selected = selectedTab,
                     onSelect = { tab = it },
                 )
@@ -308,8 +326,31 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                         }
                     }
                 }
-                if (responses.isEmpty()) item { EmptySummary(hasText) { send(PromptKind.SUMMARY) } }
-                items(responses, key = { "r${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
+                if (textResponses.isEmpty()) item { EmptySummary(hasText) { send(PromptKind.SUMMARY) } }
+                items(textResponses, key = { "r${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
+            } else if (selectedTab == 1) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (visualResponses.isEmpty()) "" else "Mappe, infografiche e file",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { addFile.launch(arrayOf("image/*", "application/pdf")) }) {
+                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Aggiungi immagine o PDF")
+                        }
+                    }
+                }
+                if (visualResponses.isEmpty()) item {
+                    EmptyGraphics(
+                        hasText = hasText,
+                        onMap = { send(PromptKind.MINDMAP) },
+                        onInfographic = { send(PromptKind.INFOGRAPHIC) },
+                    )
+                }
+                items(visualResponses, key = { "v${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
             } else {
                 if (!hasText) item {
                     Text(
@@ -564,6 +605,35 @@ private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -
 }
 
 @Composable
+private fun EmptyGraphics(hasText: Boolean, onMap: () -> Unit, onInfographic: () -> Unit) {
+    AppCard {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(56.dp).clip(CircleShape).background(BrandGradient),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.AccountTree, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("Mappe e infografiche", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Claude crea un'immagine PNG. In Claude tocca il file creato, poi Condividi → \"Salva in MeNoter\". " +
+                    "Se l'hai scaricato, usa \"Aggiungi immagine o PDF\".",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GradientButton("Mappa", Icons.Default.AccountTree, onMap, enabled = hasText)
+                GradientButton("Infografica", Icons.Default.Dashboard, onInfographic, enabled = hasText)
+            }
+        }
+    }
+}
+
+@Composable
 private fun EmptySummary(hasText: Boolean, onSummarize: () -> Unit) {
     AppCard {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -665,7 +735,11 @@ private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
             Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(
-                (if (view == ViewKind.IMAGE) "Immagine · " else "Claude · ") + Transcript.date(r.createdAt),
+                (when (view) {
+                    ViewKind.IMAGE -> "Immagine · "
+                    ViewKind.PDF -> "PDF · "
+                    else -> "Claude · "
+                }) + Transcript.date(r.createdAt),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -691,6 +765,25 @@ private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
                     Text("Immagine non trovata", color = MaterialTheme.colorScheme.error)
                 }
             }
+            ViewKind.PDF -> {
+                val bmp = remember(r.text) { PdfPages.firstPage(r.text) }
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Prima pagina del PDF",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onOpen),
+                    )
+                } else {
+                    Text("PDF non leggibile", color = MaterialTheme.colorScheme.error)
+                }
+                Spacer(Modifier.height(8.dp))
+                GradientButton("Apri PDF", Icons.Default.Description, onOpen)
+            }
             ViewKind.HTML -> {
                 Text(
                     "Infografica pronta: aprila a schermo intero, ingrandiscila o salvala come immagine.",
@@ -708,9 +801,11 @@ private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
             null -> SelectionContainer { MarkdownText(r.text) }
         }
         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-            if (view == ViewKind.IMAGE) {
-                IconButton(onClick = { ClaudeShare.shareFile(context, File(r.text), "image/*", note.title) }) {
-                    Icon(Icons.Default.Share, contentDescription = "Condividi immagine", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (view == ViewKind.IMAGE || view == ViewKind.PDF) {
+                IconButton(onClick = {
+                    ClaudeShare.shareFile(context, File(r.text), if (view == ViewKind.PDF) "application/pdf" else "image/*", note.title)
+                }) {
+                    Icon(Icons.Default.Share, contentDescription = "Condividi", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 IconButton(onClick = { ClaudeShare.copy(context, note.title, r.text) }) {
@@ -720,7 +815,7 @@ private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
                     Icon(Icons.Default.Share, contentDescription = "Condividi (Notion, Docs, email…)", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (view != ViewKind.IMAGE) Box {
+            if (view != ViewKind.IMAGE && view != ViewKind.PDF) Box {
                 var typeMenu by remember { mutableStateOf(false) }
                 IconButton(onClick = { typeMenu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "Mostra come…", tint = MaterialTheme.colorScheme.onSurfaceVariant)

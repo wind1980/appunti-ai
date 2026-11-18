@@ -54,7 +54,7 @@ class ReceiveTextActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val send = intent?.takeIf { it.action == Intent.ACTION_SEND }
-        val image: Uri? = send?.takeIf { it.type?.startsWith("image/") == true }?.let { streamUri(it) }
+        val image: Uri? = send?.takeIf { it.type?.startsWith("image/") == true || it.type == "application/pdf" }?.let { streamUri(it) }
         val text = send?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim() ?: ""
         if (image == null && text.isEmpty()) {
             Toast.makeText(this, "Niente da salvare", Toast.LENGTH_SHORT).show()
@@ -64,7 +64,7 @@ class ReceiveTextActivity : ComponentActivity() {
 
         /** Salva il contenuto ricevuto (immagine o testo) nella nota indicata. */
         suspend fun saveTo(noteId: Long, kind: String?) {
-            if (image != null) NotesRepo.saveImage(applicationContext, noteId, image)
+            if (image != null) NotesRepo.saveFile(applicationContext, noteId, image)
             else NotesRepo.saveResponse(applicationContext, noteId, text, kind)
         }
 
@@ -100,7 +100,7 @@ class ReceiveTextActivity : ComponentActivity() {
                     ) {
                         item {
                             Text(
-                                if (image != null) "Immagine da salvare in una nota" else text,
+                                if (image != null) "Immagine o PDF da salvare in una nota" else text,
                                 maxLines = 4,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
@@ -118,7 +118,7 @@ class ReceiveTextActivity : ComponentActivity() {
                                     Spacer(Modifier.height(12.dp))
                                     GradientButton(
                                         text = when {
-                                            image != null -> "Salva immagine qui"
+                                            image != null -> "Salva qui"
                                             kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
                                             else -> "Salva qui"
                                         },

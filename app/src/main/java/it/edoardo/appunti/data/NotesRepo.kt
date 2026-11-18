@@ -25,6 +25,9 @@ import java.util.Locale
 /** Tipo di risposta per le immagini salvate (il testo è il percorso del file). */
 const val KIND_IMAGE = "image"
 
+/** Tipo di risposta per i PDF salvati (il testo è il percorso del file). */
+const val KIND_PDF = "pdf"
+
 object NotesRepo {
 
     private fun workName(id: Long) = "trascrizione-$id"
@@ -187,34 +190,43 @@ object NotesRepo {
         return true
     }
 
-    /** Immagine condivisa (es. screenshot di un grafico di Claude) salvata nella nota. */
-    suspend fun saveImage(context: Context, noteId: Long, uri: Uri) = withContext(Dispatchers.IO) {
-        val type = context.contentResolver.getType(uri) ?: "image/png"
+    /** Immagine (PNG, JPG…) o PDF creato da Claude, salvato nella nota come file. */
+    suspend fun saveFile(context: Context, noteId: Long, uri: Uri) = withContext(Dispatchers.IO) {
+        val type = context.contentResolver.getType(uri) ?: ""
+        var name = ""
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) name = c.getString(0) ?: ""
+        }
+        val isPdf = type == "application/pdf" || name.lowercase().endsWith(".pdf")
         val ext = when {
-            type.contains("png") -> "png"
+            isPdf -> "pdf"
+            type.contains("png") || name.lowercase().endsWith(".png") -> "png"
             type.contains("webp") -> "webp"
             else -> "jpg"
         }
         val dir = File(context.filesDir, "images").apply { mkdirs() }
-        val dest = File(dir, "img-${System.currentTimeMillis()}.$ext")
+        val dest = File(dir, "file-${System.currentTimeMillis()}.$ext")
         context.contentResolver.openInputStream(uri)!!.use { input -> dest.outputStream().use { input.copyTo(it) } }
         context.app.db.notes().insertResponse(
-            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = dest.absolutePath, kind = KIND_IMAGE)
+            ClaudeResponse(
+                noteId = noteId, createdAt = System.currentTimeMillis(), text = dest.absolutePath,
+                kind = if (isPdf) KIND_PDF else KIND_IMAGE,
+            )
         )
     }
 
     /** Nuova nota che contiene solo un'immagine condivisa. */
     suspend fun addImageNote(context: Context, uri: Uri): Long {
-        val title = "Immagine " + SimpleDateFormat("d MMM HH:mm", Locale.ITALIAN).format(Date())
+        val title = "Grafica " + SimpleDateFormat("d MMM HH:mm", Locale.ITALIAN).format(Date())
         val id = context.app.db.notes().insert(
             Note(title = title, createdAt = System.currentTimeMillis(), audioPath = null, status = Status.TEXT)
         )
-        saveImage(context, id, uri)
+        saveFile(context, id, uri)
         return id
     }
 
     suspend fun deleteResponse(context: Context, r: ClaudeResponse) {
-        if (r.kind == KIND_IMAGE) withContext(Dispatchers.IO) { File(r.text).delete() }
+        if (r.kind == KIND_IMAGE || r.kind == KIND_PDF) withContext(Dispatchers.IO) { File(r.text).delete() }
         context.app.db.notes().deleteResponse(r)
     }
 

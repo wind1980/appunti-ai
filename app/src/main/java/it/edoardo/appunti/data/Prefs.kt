@@ -21,18 +21,17 @@ Comincia la risposta con una riga "# " seguita da un titolo breve per questa not
     ),
     MINDMAP(
         "mindmap", "Mappa",
-        """Crea una mappa concettuale della trascrizione qui sotto (o nel file allegato).
-Scrivila SOLO come elenco puntato annidato in Markdown, così:
+        """Crea una mappa concettuale della trascrizione qui sotto (o nel file allegato): tema centrale al centro, da 4 a 7 rami principali, al massimo 3 livelli, testi brevi (massimo 6 parole per punto).
+1. Disegnala come FILE IMMAGINE PNG scaricabile (usa l'esecuzione del codice, per esempio Python con matplotlib): sfondo chiaro, un colore diverso per ogni ramo, testo leggibile su telefono.
+2. Nel messaggio scrivi solo la stessa mappa come elenco puntato annidato in Markdown:
 # Tema centrale
 - Ramo principale
-  - Sotto-punto
-    - Dettaglio
-Usa da 4 a 7 rami principali, al massimo 3 livelli, e testi brevi (al massimo 6 parole per punto). Niente diagrammi, niente codice: solo l'elenco."""
+  - Sotto-punto"""
     ),
     INFOGRAPHIC(
         "infographic", "Infografica",
         """Crea un'infografica che riassuma la trascrizione qui sotto (o nel file allegato): titolo, numeri o fatti chiave, decisioni, prossimi passi.
-Creala come artefatto HTML: UNA sola pagina completa e autonoma (<!DOCTYPE html> … </html>), con il CSS dentro <style> e nessuna risorsa esterna (niente font, immagini, librerie o script da internet); icone con emoji o SVG inline. Pensala per lo schermo di uno smartphone (larghezza massima 480px), colori vivaci e testo leggibile."""
+Creala come FILE IMMAGINE PNG scaricabile (usa l'esecuzione del codice, per esempio Python con matplotlib o Pillow), in formato verticale per smartphone (circa 1080 px di larghezza), colori vivaci, testo grande e leggibile, in italiano. Nel messaggio scrivi solo una riga che dice che il file è pronto."""
     ),
     TRANSLATE(
         "translate", "Traduci",

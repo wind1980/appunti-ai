@@ -132,7 +132,7 @@ interface NoteDao {
     @Insert
     suspend fun insertResponse(response: ClaudeResponse): Long
 
-    @Query("SELECT text FROM responses WHERE noteId = :noteId AND kind = 'image'")
+    @Query("SELECT text FROM responses WHERE noteId = :noteId AND kind IN ('image', 'pdf')")
     suspend fun imagePaths(noteId: Long): List<String>
 
     @Query("UPDATE responses SET kind = :kind WHERE id = :id")

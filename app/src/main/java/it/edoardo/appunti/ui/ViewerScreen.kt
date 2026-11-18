@@ -37,6 +37,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import it.edoardo.appunti.app
 import it.edoardo.appunti.data.ClaudeResponse
 import it.edoardo.appunti.data.KIND_IMAGE
+import it.edoardo.appunti.data.KIND_PDF
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import it.edoardo.appunti.data.PromptKind
 import it.edoardo.appunti.share.ClaudeShare
 import java.io.File
@@ -45,10 +48,11 @@ import java.util.Date
 import java.util.Locale
 
 /** Che cosa mostra il visualizzatore per una risposta salvata. */
-enum class ViewKind { MAP, HTML, IMAGE }
+enum class ViewKind { MAP, HTML, IMAGE, PDF }
 
 fun viewKindOf(r: ClaudeResponse): ViewKind? = when {
     r.kind == KIND_IMAGE -> ViewKind.IMAGE
+    r.kind == KIND_PDF -> ViewKind.PDF
     r.kind == PromptKind.INFOGRAPHIC.key -> ViewKind.HTML
     r.kind == PromptKind.MINDMAP.key && MindMap.looksLikeMap(r.text) -> ViewKind.MAP
     else -> null
@@ -74,6 +78,7 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
         ViewKind.MAP -> "Mappa"
         ViewKind.HTML -> "Infografica"
         ViewKind.IMAGE -> "Immagine"
+        ViewKind.PDF -> "PDF"
         null -> ""
     }
 
@@ -88,15 +93,21 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
                 },
                 actions = {
                     IconButton(onClick = {
-                        val png = webView?.let { capture(context, it, label) }
-                        if (png != null) ClaudeShare.shareFile(context, png, "image/png", "$label – $title")
+                        val file = when (kind) {
+                            ViewKind.IMAGE, ViewKind.PDF -> r?.let { File(it.text) }
+                            else -> webView?.let { capture(context, it, label) }
+                        }
+                        if (file != null) ClaudeShare.shareFile(context, file, if (kind == ViewKind.PDF) "application/pdf" else "image/*", "$label – $title")
                         else Toast.makeText(context, "Immagine non pronta, riprova tra un attimo", Toast.LENGTH_SHORT).show()
-                    }) { Icon(Icons.Default.Share, contentDescription = "Condividi come immagine") }
+                    }) { Icon(Icons.Default.Share, contentDescription = "Condividi") }
                     IconButton(onClick = {
-                        val png = webView?.let { capture(context, it, label) }
-                        if (png != null) saveToGallery(context, png) else
+                        val file = when (kind) {
+                            ViewKind.IMAGE, ViewKind.PDF -> r?.let { File(it.text) }
+                            else -> webView?.let { capture(context, it, label) }
+                        }
+                        if (file != null) saveToDevice(context, file) else
                             Toast.makeText(context, "Immagine non pronta, riprova tra un attimo", Toast.LENGTH_SHORT).show()
-                    }) { Icon(Icons.Default.Download, contentDescription = "Salva nella galleria") }
+                    }) { Icon(Icons.Default.Download, contentDescription = "Salva sul telefono") }
                 },
             )
         },
@@ -105,8 +116,19 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
             Text("Contenuto non disponibile", Modifier.padding(padding))
             return@Scaffold
         }
-        val html = remember(r.id) {
+        var pdfPages by remember(r.id) { mutableStateOf<List<File>?>(null) }
+        if (kind == ViewKind.PDF) LaunchedEffect(r.id) {
+            pdfPages = withContext(Dispatchers.IO) { PdfPages.renderAll(context, r.text) }
+        }
+        val html = remember(r.id, pdfPages) {
             when (kind) {
+                ViewKind.PDF -> {
+                    val pages = pdfPages
+                    if (pages == null) "<html><body style='font-family:sans-serif;padding:24px'>Apertura del PDF…</body></html>"
+                    else """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, user-scalable=yes">
+<style>body{margin:0;background:#E9EBF3}img{display:block;width:100%;margin:0 0 8px 0;background:#fff}</style></head><body>""" +
+                        pages.joinToString("") { """<img src="file://${it.absolutePath}">""" } + "</body></html>"
+                }
                 ViewKind.MAP -> MindMap.html(r.text, title.ifBlank { "Mappa" })
                 ViewKind.HTML -> r.text
                 ViewKind.IMAGE -> """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, user-scalable=yes">
@@ -164,21 +186,30 @@ private fun capture(context: Context, wv: WebView, label: String): File? {
     }
 }
 
-private fun saveToGallery(context: Context, png: File) {
+/** Immagini nella galleria (Immagini › MeNoter), PDF nei Download (Download › MeNoter). */
+private fun saveToDevice(context: Context, file: File) {
+    val isPdf = file.extension.lowercase() == "pdf"
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-        ClaudeShare.shareFile(context, png, "image/png", png.nameWithoutExtension)
+        ClaudeShare.shareFile(context, file, if (isPdf) "application/pdf" else "image/*", file.nameWithoutExtension)
         return
     }
-    val values = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, png.name)
-        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/MeNoter")
+    val mime = when (file.extension.lowercase()) {
+        "pdf" -> "application/pdf"
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        else -> "image/jpeg"
     }
-    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+    val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+        put(MediaStore.MediaColumns.RELATIVE_PATH, if (isPdf) "Download/MeNoter" else "Pictures/MeNoter")
+    }
+    val collection = if (isPdf) MediaStore.Downloads.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    val uri = context.contentResolver.insert(collection, values)
     if (uri == null) {
         Toast.makeText(context, "Salvataggio non riuscito", Toast.LENGTH_SHORT).show()
         return
     }
-    context.contentResolver.openOutputStream(uri)?.use { out -> png.inputStream().use { it.copyTo(out) } }
-    Toast.makeText(context, "Salvata in Immagini › MeNoter", Toast.LENGTH_LONG).show()
+    context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+    Toast.makeText(context, if (isPdf) "Salvato in Download › MeNoter" else "Salvata in Immagini › MeNoter", Toast.LENGTH_LONG).show()
 }
