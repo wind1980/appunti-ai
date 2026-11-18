@@ -4,7 +4,7 @@ App Android personale: registra o importa un audio, lo trascrive **sul telefono*
 
 ## Novità della 0.5
 
-- **Il file .txt contiene solo la trascrizione**; la richiesta va nel messaggio e, per sicurezza, anche negli appunti.
+- **Il comando è dentro il file .txt** (in cima, prima della trascrizione), perché l'app Claude scarta il testo del messaggio quando c'è un allegato. Il nome del file indica il comando, es. "Riassunto - Riunione.txt". (0.5.1)
 - **Claude si apre nella sua finestra**: la chat resta aperta e si riprende. Dopo il primo invio, "Invia in: Chat già aperta" vale per tutti i pulsanti (copia solo la richiesta, senza rimandare la trascrizione).
 - **Risposte ripulite**: MeNoter toglie le frasi di apertura e chiusura di Claude; i prompt chiedono di rispondere solo con il contenuto.
 - **Mappa concettuale disegnata**: Claude risponde con un elenco a livelli e MeNoter lo disegna come schema ad albero colorato.

@@ -60,11 +60,15 @@ object ClaudeShare {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, note.title)
             if (asFile) {
-                // Il file contiene solo la trascrizione; la richiesta va nel messaggio.
-                val file = writeTxt(context, note, "TRASCRIZIONE – $header\n\n$transcript")
+                // L'app Claude scarta il testo del messaggio quando c'è un allegato:
+                // il comando va quindi in cima al file, prima della trascrizione.
+                val body = "RICHIESTA PER CLAUDE – ${kind.label.uppercase()}\n\n$prompt\n\n" +
+                    "==========\nTRASCRIZIONE – $header\n\n$transcript"
+                val file = writeTxt(context, "${kind.label} - ${note.title}", body)
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_TEXT, "$prompt\n\n(La trascrizione è nel file allegato \"${file.name}\".)")
+                // Se un giorno l'app Claude userà anche il messaggio, arriverà questo.
+                putExtra(Intent.EXTRA_TEXT, "Segui la richiesta scritta all'inizio del file allegato.")
                 clipData = ClipData.newUri(context.contentResolver, file.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } else {
@@ -75,11 +79,6 @@ object ClaudeShare {
         }
 
         remember(context, note, kind)
-        if (asFile) {
-            // Se l'app Claude allega il file ma lascia vuoto il messaggio, la richiesta è negli appunti.
-            copy(context, note.title, prompt, toast = false)
-            Toast.makeText(context, "Se il messaggio in Claude è vuoto, incolla: la richiesta è negli appunti", Toast.LENGTH_LONG).show()
-        }
         try {
             context.startActivity(Intent(intent).setPackage(CLAUDE_PACKAGE))
         } catch (e: ActivityNotFoundException) {
@@ -155,10 +154,10 @@ object ClaudeShare {
 
     fun shareDir(context: Context): File = File(context.cacheDir, "share").apply { mkdirs() }
 
-    private fun writeTxt(context: Context, note: Note, text: String): File {
+    private fun writeTxt(context: Context, name: String, text: String): File {
         val dir = shareDir(context)
         dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > 86_400_000L) it.delete() }
-        val safe = note.title.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(50).ifBlank { "trascrizione" }
+        val safe = name.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(60).ifBlank { "trascrizione" }
         return File(dir, "$safe.txt").apply { writeText(text) }
     }
 }
