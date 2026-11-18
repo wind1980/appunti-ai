@@ -32,8 +32,7 @@ Usa da 4 a 7 rami principali, al massimo 3 livelli, e testi brevi (al massimo 6 
     INFOGRAPHIC(
         "infographic", "Infografica",
         """Crea un'infografica che riassuma la trascrizione qui sotto (o nel file allegato): titolo, numeri o fatti chiave, decisioni, prossimi passi.
-Falla come UNA sola pagina HTML completa e autonoma: CSS dentro <style>, nessuna risorsa esterna (niente font, immagini, librerie o script da internet), icone con emoji o SVG inline. Pensala per lo schermo di uno smartphone (larghezza massima 480px), colori vivaci e testo leggibile.
-Rispondi solo con il codice HTML completo, in un unico blocco di codice."""
+Creala come artefatto HTML: UNA sola pagina completa e autonoma (<!DOCTYPE html> … </html>), con il CSS dentro <style> e nessuna risorsa esterna (niente font, immagini, librerie o script da internet); icone con emoji o SVG inline. Pensala per lo schermo di uno smartphone (larghezza massima 480px), colori vivaci e testo leggibile."""
     ),
     TRANSLATE(
         "translate", "Traduci",

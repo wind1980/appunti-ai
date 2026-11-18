@@ -160,6 +160,29 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
         tab = 0 // al ritorno si è già sulla scheda dove incollare la risposta
     }
 
+    var pasteMenu by remember { mutableStateOf(false) }
+
+    /** Salva un testo copiato da Claude con il tipo scelto (null = testo normale). */
+    fun saveAs(text: String, kind: PromptKind?) {
+        scope.launch {
+            val ok = NotesRepo.saveResponse(context, n.id, text, kind?.key, strict = kind == PromptKind.INFOGRAPHIC)
+            if (!ok) {
+                Toast.makeText(
+                    context,
+                    "Negli appunti non c'è il codice dell'infografica. In Claude apri l'infografica (artefatto) e usa Copia, poi riprova.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } else {
+                clip = null
+                tab = 0
+                Toast.makeText(context, "Salvata" + (kind?.let { " come ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
+                if (kind == PromptKind.MINDMAP && !MindMap.looksLikeMap(text)) {
+                    Toast.makeText(context, "Non sembra una mappa a livelli: la vedrai come testo", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -239,11 +262,11 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                     ClipboardProposal(
                         raw = text,
                         kind = PromptKind.fromKey(prefs.lastSentKind),
+                        // L'infografica viene riconosciuta da sola se c'è il codice HTML.
                         onSave = {
-                            scope.launch { NotesRepo.saveResponse(context, n.id, text, prefs.lastSentKind) }
-                            clip = null
-                            tab = 0
+                            saveAs(text, PromptKind.fromKey(prefs.lastSentKind)?.takeIf { it != PromptKind.ASK && it != PromptKind.INFOGRAPHIC })
                         },
+                        onSaveAs = { kind -> saveAs(text, kind) },
                         onIgnore = {
                             prefs.handledClipHash = text.hashCode()
                             clip = null
@@ -267,13 +290,21 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { pasteResponse(context) { text ->
-                            val kind = if (prefs.recentSentNoteId() == n.id) prefs.lastSentKind else null
-                            scope.launch { NotesRepo.saveResponse(context, n.id, text, kind) }
-                        } }) {
-                            Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Incolla risposta")
+                        Box {
+                            TextButton(onClick = { pasteMenu = true }) {
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Incolla come…")
+                            }
+                            PasteKindMenu(expanded = pasteMenu, onDismiss = { pasteMenu = false }) { kind ->
+                                pasteMenu = false
+                                val text = readClipboard(context)
+                                if (text.isNullOrBlank()) {
+                                    Toast.makeText(context, "Gli appunti sono vuoti: in Claude copia prima la risposta", Toast.LENGTH_LONG).show()
+                                } else {
+                                    saveAs(text, kind)
+                                }
+                            }
                         }
                     }
                 }
@@ -352,7 +383,14 @@ private fun readClipboard(context: Context): String? =
     }
 
 @Composable
-private fun ClipboardProposal(raw: String, kind: PromptKind?, onSave: () -> Unit, onIgnore: () -> Unit) {
+private fun ClipboardProposal(
+    raw: String,
+    kind: PromptKind?,
+    onSave: () -> Unit,
+    onSaveAs: (PromptKind?) -> Unit,
+    onIgnore: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
     val cleaned = remember(raw) { ResponseCleaner.clean(raw) }
     val text = if (cleaned.isHtml) "Infografica (pagina HTML)" else cleaned.text
     AppCard(color = MaterialTheme.colorScheme.primaryContainer) {
@@ -366,28 +404,55 @@ private fun ClipboardProposal(raw: String, kind: PromptKind?, onSave: () -> Unit
         Text(text, maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer)
         Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
             GradientButton(
                 when {
                     cleaned.isHtml -> "Salva infografica"
-                    kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
+                    kind != null && kind != PromptKind.ASK && kind != PromptKind.INFOGRAPHIC -> "Salva come ${typeLabel(kind)}"
                     else -> "Salva nella nota"
                 },
                 Icons.Default.ContentPaste, onSave,
             )
-            Spacer(Modifier.width(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                TextButton(onClick = { menu = true }) { Text("Altro tipo…") }
+                PasteKindMenu(expanded = menu, onDismiss = { menu = false }) { k ->
+                    menu = false
+                    onSaveAs(k)
+                }
+            }
             TextButton(onClick = onIgnore) { Text("Ignora") }
+            }
         }
     }
 }
 
-private fun pasteResponse(context: Context, onText: (String) -> Unit) {
-    val text = readClipboard(context)
-    if (text.isNullOrBlank()) {
-        Toast.makeText(context, "Gli appunti sono vuoti: in Claude copia prima la risposta", Toast.LENGTH_LONG).show()
-    } else {
-        onText(text)
-        Toast.makeText(context, "Risposta salvata", Toast.LENGTH_SHORT).show()
+private fun typeLabel(kind: PromptKind) = when (kind) {
+    PromptKind.MINDMAP -> "mappa concettuale"
+    PromptKind.INFOGRAPHIC -> "infografica"
+    else -> kind.label.lowercase()
+}
+
+/** Tipi tra cui scegliere quando si incolla una risposta di Claude (null = testo normale). */
+private val PASTE_KINDS = listOf(
+    PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC, PromptKind.TRANSLATE, PromptKind.EMAIL,
+)
+
+@Composable
+private fun PasteKindMenu(expanded: Boolean, onDismiss: () -> Unit, onPick: (PromptKind?) -> Unit) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        PASTE_KINDS.forEach { k ->
+            DropdownMenuItem(
+                text = { Text(typeLabel(k).replaceFirstChar { it.uppercase() }) },
+                leadingIcon = { Icon(k.icon(), contentDescription = null) },
+                onClick = { onPick(k) },
+            )
+        }
+        DropdownMenuItem(
+            text = { Text("Altro testo") },
+            leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+            onClick = { onPick(null) },
+        )
     }
 }
 
@@ -513,7 +578,7 @@ private fun EmptySummary(hasText: Boolean, onSummarize: () -> Unit) {
             Spacer(Modifier.height(6.dp))
             Text(
                 if (hasText) "Tocca Riassumi: si apre Claude con la trascrizione già pronta, tu premi Invia. " +
-                    "Poi copia la risposta, torna qui e tocca \"Incolla risposta\"."
+                    "Poi copia la risposta, torna qui e tocca \"Incolla come…\"."
                 else "Quando la trascrizione è pronta potrai mandarla a Claude da qui.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -653,6 +718,35 @@ private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
                 }
                 IconButton(onClick = { ClaudeShare.shareText(context, note.title, r.text) }) {
                     Icon(Icons.Default.Share, contentDescription = "Condividi (Notion, Docs, email…)", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (view != ViewKind.IMAGE) Box {
+                var typeMenu by remember { mutableStateOf(false) }
+                IconButton(onClick = { typeMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Mostra come…", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                DropdownMenu(expanded = typeMenu, onDismissRequest = { typeMenu = false }) {
+                    DropdownMenuItem(text = { Text("Mostra come mappa concettuale") }, onClick = {
+                        typeMenu = false
+                        if (MindMap.looksLikeMap(r.text)) {
+                            scope.launch { context.app.db.notes().setResponseKind(r.id, PromptKind.MINDMAP.key) }
+                        } else {
+                            Toast.makeText(context, "Non è un elenco a livelli: chiedi di nuovo la Mappa a Claude", Toast.LENGTH_LONG).show()
+                        }
+                    })
+                    DropdownMenuItem(text = { Text("Mostra come infografica") }, onClick = {
+                        typeMenu = false
+                        val html = ResponseCleaner.extractHtml(r.text)
+                        if (html != null) {
+                            scope.launch { context.app.db.notes().setResponseKind(r.id, PromptKind.INFOGRAPHIC.key) }
+                        } else {
+                            Toast.makeText(context, "In questa risposta non c'è il codice di un'infografica", Toast.LENGTH_LONG).show()
+                        }
+                    })
+                    DropdownMenuItem(text = { Text("Mostra come testo") }, onClick = {
+                        typeMenu = false
+                        scope.launch { context.app.db.notes().setResponseKind(r.id, null) }
+                    })
                 }
             }
             IconButton(onClick = { scope.launch { NotesRepo.deleteResponse(context, r) } }) {

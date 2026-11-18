@@ -22,9 +22,41 @@ object MindMap {
 
     private val palette = listOf("#4255FF", "#8A5CFF", "#F2803A", "#16A36A", "#E5484D", "#0EA5E9", "#D946EF", "#C99A06")
 
-    /** true se il testo ha la forma di una mappa: almeno 3 punti di elenco. */
-    fun looksLikeMap(markdown: String): Boolean =
-        markdown.lines().count { Regex("^\\s*([-*•]|\\d+[.)])\\s+").containsMatchIn(it) } >= 3
+    /** true se il testo ha la forma di una mappa: almeno 3 punti di elenco (anche in formato mermaid). */
+    fun looksLikeMap(text: String): Boolean =
+        normalize(text).lines().count { Regex("^\\s*([-*•]|\\d+[.)])\\s+").containsMatchIn(it) } >= 3
+
+    /**
+     * Se Claude ha scritto la mappa in formato mermaid ("mindmap" con i rientri),
+     * la converte nell'elenco annidato Markdown che MeNoter sa disegnare. Altrimenti la lascia com'è.
+     */
+    fun normalize(text: String): String {
+        val fence = Regex("```[ \\t]*mermaid[ \\t]*\\r?\\n([\\s\\S]*?)```").find(text)
+        val body = fence?.groupValues?.get(1) ?: text
+        val lines = body.lines()
+        val start = lines.indexOfFirst { it.trim().startsWith("mindmap") }
+        if (start < 0) return text
+        val out = StringBuilder()
+        val indents = ArrayDeque<Int>()
+        for (raw in lines.drop(start + 1)) {
+            if (raw.isBlank() || raw.trim().startsWith("::") || raw.trim().startsWith("%%")) continue
+            val indent = raw.length - raw.trimStart().length
+            while (indents.isNotEmpty() && indents.last() >= indent) indents.removeLast()
+            val level = indents.size
+            indents.addLast(indent)
+            val label = mermaidLabel(raw.trim())
+            if (label.isEmpty()) continue
+            if (level == 0) out.append("# ").append(label).append('\n')
+            else out.append("  ".repeat(level - 1)).append("- ").append(label).append('\n')
+        }
+        return if (out.isEmpty()) text else out.toString().trim()
+    }
+
+    /** Testo di un nodo mermaid: "id((Testo))", "[Testo]", "(Testo)", "{{Testo}}" o testo semplice. */
+    private fun mermaidLabel(node: String): String {
+        val inside = Regex("[\\(\\[\\{]+\\s*\"?(.+?)\"?\\s*[\\)\\]\\}]+\\s*$").find(node)?.groupValues?.get(1)
+        return (inside ?: node).replace("**", "").trim()
+    }
 
     private fun parse(markdown: String, fallbackTitle: String): Node {
         var root: Node? = null
@@ -94,7 +126,7 @@ object MindMap {
     }
 
     fun html(markdown: String, title: String): String {
-        val root = parse(markdown, title)
+        val root = parse(normalize(markdown), title)
         prepare(root, 0, "#4255FF")
 
         // Larghezza di ogni colonna = nodo più largo a quella profondità.

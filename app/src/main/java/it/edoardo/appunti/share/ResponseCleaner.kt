@@ -62,20 +62,35 @@ object ResponseCleaner {
 
     /** Tiene solo la pagina HTML (o l'SVG) se la risposta ne contiene una. */
     fun extractHtml(t: String): String? {
-        htmlFence.findAll(t).map { it.groupValues[1].trim() }.firstOrNull { looksHtml(it) }?.let { return it }
+        htmlFence.findAll(t).map { it.groupValues[1].trim() }.firstOrNull { looksHtml(it) }?.let { return asPage(it) }
         val lower = t.lowercase()
         val start = listOf(lower.indexOf("<!doctype html"), lower.indexOf("<html")).filter { it >= 0 }.minOrNull()
         val end = lower.lastIndexOf("</html>")
         if (start != null && end > start) return t.substring(start, end + "</html>".length)
         val s2 = lower.indexOf("<svg")
         val e2 = lower.lastIndexOf("</svg>")
-        if (s2 >= 0 && e2 > s2) return t.substring(s2, e2 + "</svg>".length)
+        if (s2 >= 0 && e2 > s2 && s2 < 400) return asPage(t.substring(s2, e2 + "</svg>".length))
+        // Frammento senza <html>: <style> e <div>/<section> che iniziano subito.
+        val trimmed = t.trimStart()
+        if (Regex("^<(style|div|section|main|article|header)\\b", RegexOption.IGNORE_CASE).containsMatchIn(trimmed) &&
+            trimmed.lowercase().contains("</")
+        ) return asPage(trimmed)
         return null
     }
 
     private fun looksHtml(s: String): Boolean {
         val l = s.lowercase()
-        return l.contains("<html") || l.contains("<!doctype") || l.startsWith("<svg") || (l.contains("<body") && l.contains("</"))
+        return l.contains("<html") || l.contains("<!doctype") || l.contains("<svg") || l.contains("<style") ||
+            ((l.contains("<div") || l.contains("<section") || l.contains("<body")) && l.contains("</"))
+    }
+
+    /** Completa un frammento HTML in una pagina intera, adatta allo schermo del telefono. */
+    fun asPage(html: String): String {
+        if (html.lowercase().contains("<html")) return html
+        return """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0">
+$html
+</body></html>"""
     }
 
     private fun trimEnd(lines: List<String>): List<String> {

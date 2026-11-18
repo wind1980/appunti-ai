@@ -12,6 +12,7 @@ import it.edoardo.appunti.app
 import it.edoardo.appunti.audio.SAMPLE_RATE
 import it.edoardo.appunti.audio.Wav
 import it.edoardo.appunti.share.ResponseCleaner
+import it.edoardo.appunti.ui.MindMap
 import it.edoardo.appunti.whisper.WhisperNative
 import it.edoardo.appunti.work.TranscriptionWorker
 import kotlinx.coroutines.Dispatchers
@@ -153,22 +154,37 @@ object NotesRepo {
      * Salva una risposta di Claude nella nota. Se è un riassunto e la nota ha ancora un titolo
      * automatico ("Registrazione …" o il nome di un file), usa il titolo proposto da Claude.
      */
-    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null) {
+    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null, strict: Boolean = false): Boolean {
         // Il testo originale (quello negli appunti) è "gestito": non va riproposto.
         context.app.prefs.handledClipHash = text.trim().hashCode()
         val cleaned = ResponseCleaner.clean(text)
-        val clean = cleaned.text
-        val finalKind = if (cleaned.isHtml) PromptKind.INFOGRAPHIC.key else kind
+        var clean = cleaned.text
+        var finalKind = kind
+        when {
+            cleaned.isHtml -> finalKind = PromptKind.INFOGRAPHIC.key
+            // Infografica chiesta esplicitamente ma negli appunti non c'è codice HTML: non si salva.
+            kind == PromptKind.INFOGRAPHIC.key && strict -> return false
+            kind == PromptKind.INFOGRAPHIC.key -> finalKind = null
+            else -> {
+                // Mappa scritta da Claude in formato mermaid: diventa l'elenco che MeNoter disegna.
+                val norm = MindMap.normalize(clean)
+                if (norm != clean) {
+                    clean = norm
+                    finalKind = PromptKind.MINDMAP.key
+                }
+            }
+        }
         val dao = context.app.db.notes()
         dao.insertResponse(
             ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = finalKind)
         )
         if (kind == PromptKind.SUMMARY.key) {
-            val note = dao.get(noteId) ?: return
+            val note = dao.get(noteId) ?: return true
             val heading = clean.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
                 ?.takeIf { it.startsWith("#") }?.trimStart('#', ' ')?.trim()?.trim('*')
             if (heading != null && heading.length in 3..60 && isAutoTitle(note.title)) dao.rename(noteId, heading)
         }
+        return true
     }
 
     /** Immagine condivisa (es. screenshot di un grafico di Claude) salvata nella nota. */
