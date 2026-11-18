@@ -62,6 +62,8 @@ data class ClaudeResponse(
     val noteId: Long,
     val createdAt: Long,
     val text: String,
+    /** Tipo di richiesta che ha prodotto la risposta (chiave di PromptKind), se nota. */
+    val kind: String? = null,
 )
 
 @Dao
@@ -134,7 +136,7 @@ interface NoteDao {
     suspend fun deleteResponse(response: ClaudeResponse)
 }
 
-@Database(entities = [Note::class, ClaudeResponse::class], version = 2, exportSchema = false)
+@Database(entities = [Note::class, ClaudeResponse::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
 
@@ -147,9 +149,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 0.3 → 0.4: tipo di richiesta salvato con ogni risposta di Claude. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE responses ADD COLUMN kind TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "appunti.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

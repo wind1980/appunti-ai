@@ -53,6 +53,11 @@ object ClaudeShare {
             }
         }
 
+        // Ricorda nota e tipo di richiesta: quando la risposta torna, l'app sa dove metterla.
+        prefs.lastSentNoteId = note.id
+        prefs.lastSentKind = kind.key
+        prefs.lastSentAt = System.currentTimeMillis()
+
         try {
             context.startActivity(Intent(intent).setPackage(CLAUDE_PACKAGE))
         } catch (e: ActivityNotFoundException) {
@@ -67,9 +72,30 @@ object ClaudeShare {
         }
     }
 
-    fun copy(context: Context, label: String, text: String) {
+    fun copy(context: Context, label: String, text: String, toast: Boolean = true) {
+        // Il testo copiato dall'app non va riproposto come "risposta di Claude".
+        context.app.prefs.handledClipHash = text.trim().hashCode()
         context.getSystemService<ClipboardManager>()!!.setPrimaryClip(ClipData.newPlainText(label, text))
-        Toast.makeText(context, "Copiato", Toast.LENGTH_SHORT).show()
+        if (toast) Toast.makeText(context, "Copiato", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Domanda successiva nella chat di Claude già aperta: copia solo la domanda e riapre Claude,
+     * senza mandare di nuovo tutta la trascrizione in una chat nuova.
+     */
+    fun continueInChat(context: Context, note: Note, question: String) {
+        copy(context, note.title, question.trim(), toast = false)
+        val prefs = context.app.prefs
+        prefs.lastSentNoteId = note.id
+        prefs.lastSentKind = PromptKind.ASK.key
+        prefs.lastSentAt = System.currentTimeMillis()
+        val launch = context.packageManager.getLaunchIntentForPackage(CLAUDE_PACKAGE)
+        if (launch == null) {
+            Toast.makeText(context, "App Claude non trovata: la domanda è negli appunti", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(context, "Domanda copiata: in Claude tieni premuto e incolla", Toast.LENGTH_LONG).show()
+        context.startActivity(launch)
     }
 
     /** Condivide un testo qualsiasi (es. una risposta salvata) con le altre app: Notion, Docs, email. */

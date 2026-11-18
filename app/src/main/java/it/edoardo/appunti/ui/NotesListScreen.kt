@@ -128,7 +128,7 @@ fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(greeting(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Appunti AI", style = MaterialTheme.typography.headlineMedium)
+                    Text("MeNoter", style = MaterialTheme.typography.headlineMedium)
                 }
                 IconButton(onClick = onSettings) {
                     Icon(Icons.Default.Settings, contentDescription = "Impostazioni", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -206,7 +206,7 @@ fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
             onDismissRequest = { whatsappHelp = false },
             title = { Text("Trascrivere un vocale") },
             text = {
-                Text("In WhatsApp (o nel registratore del telefono) tieni premuto il vocale, tocca Condividi e scegli \"Trascrivi con Appunti\". La nota si apre qui da sola.")
+                Text("In WhatsApp (o nel registratore del telefono) tieni premuto il vocale, tocca Condividi e scegli \"Trascrivi con MeNoter\". La nota si apre qui da sola.")
             },
             confirmButton = { TextButton(onClick = { whatsappHelp = false }) { Text("Ho capito") } },
         )

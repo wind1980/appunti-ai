@@ -1,6 +1,14 @@
-# Appunti AI – versione 0.3
+# MeNoter – versione 0.4
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
+
+## Novità della 0.4
+
+- **Nuovo nome: MeNoter.** (Il codice interno resta `it.edoardo.appunti`, così gli aggiornamenti si installano sopra senza perdere le note.)
+- **Ritorno da Claude in un tocco**: se copi una risposta in Claude e torni nella nota, MeNoter la propone da sola ("Salva come Riassunto").
+- **"Salva in MeNoter"** dal menu Condividi propone per prima la nota da cui hai scritto a Claude.
+- **Risposte etichettate** (Riassunto, Azioni, Mappa, Email…). Il primo riassunto dà alla nota un titolo vero al posto di "Registrazione …".
+- **Domande nella chat già aperta**: dopo un invio, le domande successive copiano solo il testo della domanda e riaprono Claude, senza ricominciare una chat con tutta la trascrizione. Si può sempre scegliere "Nuova chat".
 
 ## Novità della 0.3
 

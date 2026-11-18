@@ -143,11 +143,28 @@ object NotesRepo {
         context.app.db.notes().delete(note.id)
     }
 
-    suspend fun saveResponse(context: Context, noteId: Long, text: String) {
-        context.app.db.notes().insertResponse(
-            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = text.trim())
+    /**
+     * Salva una risposta di Claude nella nota. Se è un riassunto e la nota ha ancora un titolo
+     * automatico ("Registrazione …" o il nome di un file), usa il titolo proposto da Claude.
+     */
+    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null) {
+        val clean = text.trim()
+        val dao = context.app.db.notes()
+        dao.insertResponse(
+            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = kind)
         )
+        context.app.prefs.handledClipHash = clean.hashCode()
+        if (kind == PromptKind.SUMMARY.key) {
+            val note = dao.get(noteId) ?: return
+            val heading = clean.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+                ?.takeIf { it.startsWith("#") }?.trimStart('#', ' ')?.trim()?.trim('*')
+            if (heading != null && heading.length in 3..60 && isAutoTitle(note.title)) dao.rename(noteId, heading)
+        }
     }
+
+    /** Titoli messi dall'app o nomi di file, che conviene sostituire con un titolo vero. */
+    private fun isAutoTitle(title: String): Boolean =
+        title.startsWith("Registrazione") || title == "Audio importato" || !title.trim().contains(' ')
 
     /** Nota senza audio, creata da un testo condiviso (es. una risposta di Claude). */
     suspend fun addTextNote(context: Context, text: String): Long {
@@ -155,7 +172,7 @@ object NotesRepo {
         val id = context.app.db.notes().insert(
             Note(title = firstLine.take(60), createdAt = System.currentTimeMillis(), audioPath = null, status = Status.TEXT)
         )
-        saveResponse(context, id, text)
+        saveResponse(context, id, text, context.app.prefs.lastSentKind)
         return id
     }
 }

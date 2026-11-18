@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.edoardo.appunti.app
 import it.edoardo.appunti.data.ClaudeResponse
@@ -118,6 +119,25 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val player = rememberPlayer(n.audioPath)
+    val prefs = context.app.prefs
+
+    // Al ritorno da Claude: se negli appunti c'è una risposta nuova, la si propone con un tocco.
+    var resumeTick by remember { mutableIntStateOf(0) }
+    LifecycleResumeEffect(Unit) {
+        resumeTick++
+        onPauseOrDispose { }
+    }
+    var clip by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(resumeTick, responses.size) {
+        clip = null
+        if (prefs.recentSentNoteId() != n.id) return@LaunchedEffect
+        delay(600) // Android lascia leggere gli appunti solo quando la finestra ha il focus
+        val text = readClipboard(context)?.trim()
+        clip = text?.takeIf {
+            it.length >= 30 && it.hashCode() != prefs.handledClipHash && responses.none { r -> r.text == it }
+        }
+    }
+    val recentlySent = prefs.recentSentNoteId() == n.id
 
     fun send(kind: PromptKind, question: String? = null) {
         if (!hasText) {
@@ -177,7 +197,15 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
             )
         },
         bottomBar = {
-            ClaudeBar(enabled = hasText, player = player, onAction = { send(it) }, onAsk = { q -> send(PromptKind.ASK, q) })
+            ClaudeBar(
+                enabled = hasText,
+                player = player,
+                recentlySent = recentlySent,
+                onAction = { send(it) },
+                onAsk = { q, sameChat ->
+                    if (sameChat) ClaudeShare.continueInChat(context, n, q) else send(PromptKind.ASK, q)
+                },
+            )
         },
     ) { padding ->
         LazyColumn(
@@ -197,6 +225,23 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                 )
             }
             item { StatusCard(n, onSettings) }
+            clip?.let { text ->
+                item {
+                    ClipboardProposal(
+                        text = text,
+                        kind = PromptKind.fromKey(prefs.lastSentKind),
+                        onSave = {
+                            scope.launch { NotesRepo.saveResponse(context, n.id, text, prefs.lastSentKind) }
+                            clip = null
+                            tab = 0
+                        },
+                        onIgnore = {
+                            prefs.handledClipHash = text.hashCode()
+                            clip = null
+                        },
+                    )
+                }
+            }
             item {
                 SegmentedTabs(
                     labels = listOf("Riepilogo AI", "Trascrizione"),
@@ -213,7 +258,10 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { pasteResponse(context) { text -> scope.launch { NotesRepo.saveResponse(context, n.id, text) } } }) {
+                        TextButton(onClick = { pasteResponse(context) { text ->
+                            val kind = if (prefs.recentSentNoteId() == n.id) prefs.lastSentKind else null
+                            scope.launch { NotesRepo.saveResponse(context, n.id, text, kind) }
+                        } }) {
                             Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Incolla risposta")
@@ -286,9 +334,40 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
     }
 }
 
+private fun readClipboard(context: Context): String? =
+    try {
+        context.getSystemService<ClipboardManager>()?.primaryClip
+            ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+    } catch (e: Exception) {
+        null
+    }
+
+@Composable
+private fun ClipboardProposal(text: String, kind: PromptKind?, onSave: () -> Unit, onIgnore: () -> Unit) {
+    AppCard(color = MaterialTheme.colorScheme.primaryContainer) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.ContentPaste, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Hai copiato una risposta di Claude", style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(text, maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer)
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GradientButton(
+                if (kind != null && kind != PromptKind.ASK) "Salva come ${kind.label}" else "Salva nella nota",
+                Icons.Default.ContentPaste, onSave,
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onIgnore) { Text("Ignora") }
+        }
+    }
+}
+
 private fun pasteResponse(context: Context, onText: (String) -> Unit) {
-    val text = context.getSystemService<ClipboardManager>()?.primaryClip
-        ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+    val text = readClipboard(context)
     if (text.isNullOrBlank()) {
         Toast.makeText(context, "Gli appunti sono vuoti: in Claude copia prima la risposta", Toast.LENGTH_LONG).show()
     } else {
@@ -299,9 +378,17 @@ private fun pasteResponse(context: Context, onText: (String) -> Unit) {
 
 /** Barra fissa in basso: lettore audio, funzioni Claude a un tocco e domanda libera. */
 @Composable
-private fun ClaudeBar(enabled: Boolean, player: Player?, onAction: (PromptKind) -> Unit, onAsk: (String) -> Unit) {
+private fun ClaudeBar(
+    enabled: Boolean,
+    player: Player?,
+    recentlySent: Boolean,
+    onAction: (PromptKind) -> Unit,
+    onAsk: (question: String, sameChat: Boolean) -> Unit,
+) {
     val context = LocalContext.current
     var question by rememberSaveable { mutableStateOf("") }
+    // Dopo un invio recente, le domande vanno di default nella chat già aperta.
+    var sameChat by rememberSaveable(recentlySent) { mutableStateOf(recentlySent) }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         shadowElevation = 12.dp,
@@ -325,6 +412,18 @@ private fun ClaudeBar(enabled: Boolean, player: Player?, onAction: (PromptKind) 
                     ActionTile(kind.icon(), kind.label, enabled) { onAction(kind) }
                 }
             }
+            if (recentlySent) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Domanda:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(8.dp))
+                    ModePill("Chat già aperta", sameChat) { sameChat = true }
+                    Spacer(Modifier.width(6.dp))
+                    ModePill("Nuova chat", !sameChat) { sameChat = false }
+                }
+            }
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -333,12 +432,12 @@ private fun ClaudeBar(enabled: Boolean, player: Player?, onAction: (PromptKind) 
                     value = question,
                     onValueChange = { question = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Chiedi a Claude su questa nota…") },
+                    placeholder = { Text(if (recentlySent && sameChat) "Altra domanda a Claude…" else "Chiedi a Claude su questa nota…") },
                     shape = RoundedCornerShape(28.dp),
                     maxLines = 3,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
-                        if (question.isNotBlank()) { onAsk(question); question = "" }
+                        if (question.isNotBlank()) { onAsk(question, recentlySent && sameChat); question = "" }
                     }),
                     colors = OutlinedTextFieldDefaults.colors(
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -356,7 +455,7 @@ private fun ClaudeBar(enabled: Boolean, player: Player?, onAction: (PromptKind) 
                             if (question.isBlank()) {
                                 Toast.makeText(context, "Scrivi prima la domanda per Claude", Toast.LENGTH_SHORT).show()
                             } else {
-                                onAsk(question)
+                                onAsk(question, recentlySent && sameChat)
                                 question = ""
                             }
                         },
@@ -367,6 +466,20 @@ private fun ClaudeBar(enabled: Boolean, player: Player?, onAction: (PromptKind) 
             }
         }
     }
+}
+
+@Composable
+private fun ModePill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }
 
 @Composable
@@ -505,6 +618,7 @@ private fun ResponseCard(note: Note, r: ClaudeResponse) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
+            PromptKind.fromKey(r.kind)?.let { StatusChip(it.label, MaterialTheme.colorScheme.primary) }
         }
         Spacer(Modifier.height(10.dp))
         SelectionContainer { MarkdownText(r.text) }

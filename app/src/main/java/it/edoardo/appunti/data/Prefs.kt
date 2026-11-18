@@ -12,7 +12,8 @@ enum class PromptKind(val key: String, val label: String, val default: String) {
 2. Le decisioni prese.
 3. Le azioni da fare, con responsabile e scadenza se vengono citati.
 4. Le domande rimaste aperte.
-La trascrizione è automatica e può contenere errori: correggili dal contesto, senza inventare nulla. Quando citi un punto preciso indica il minuto [mm:ss]. Rispondi in italiano, con titoli ed elenchi puntati."""
+La trascrizione è automatica e può contenere errori: correggili dal contesto, senza inventare nulla. Quando citi un punto preciso indica il minuto [mm:ss]. Rispondi in italiano, con titoli ed elenchi puntati.
+Comincia la risposta con una riga "# " seguita da un titolo breve per questa nota (massimo 6 parole)."""
     ),
     ACTIONS(
         "actions", "Azioni",
@@ -35,7 +36,11 @@ La trascrizione è automatica e può contenere errori: correggili dal contesto, 
         """Ecco la trascrizione di una registrazione (qui sotto o nel file allegato). Rispondi alla mia domanda usando solo quello che c'è nella trascrizione e indica i minuti [mm:ss] da cui prendi le informazioni. Poi potrò farti altre domande nella stessa chat.
 
 Domanda: {domanda}"""
-    ),
+    );
+
+    companion object {
+        fun fromKey(key: String?): PromptKind? = entries.firstOrNull { it.key == key }
+    }
 }
 
 class Prefs(context: Context) {
@@ -84,6 +89,26 @@ class Prefs(context: Context) {
     var alwaysAsFile: Boolean
         get() = sp.getBoolean("always_file", false)
         set(v) = sp.edit().putBoolean("always_file", v).apply()
+
+    // Ultimo invio a Claude: serve a proporre la nota giusta quando la risposta torna indietro.
+    var lastSentNoteId: Long
+        get() = sp.getLong("last_sent_note", -1)
+        set(v) = sp.edit().putLong("last_sent_note", v).apply()
+    var lastSentKind: String?
+        get() = sp.getString("last_sent_kind", null)
+        set(v) = sp.edit().putString("last_sent_kind", v).apply()
+    var lastSentAt: Long
+        get() = sp.getLong("last_sent_at", 0)
+        set(v) = sp.edit().putLong("last_sent_at", v).apply()
+
+    /** Nota mandata a Claude nelle ultime 12 ore, se c'è. */
+    fun recentSentNoteId(): Long? =
+        lastSentNoteId.takeIf { it >= 0 && System.currentTimeMillis() - lastSentAt < 12 * 3_600_000L }
+
+    /** Impronta dell'ultimo testo negli appunti già gestito (salvato, ignorato o copiato dall'app). */
+    var handledClipHash: Int
+        get() = sp.getInt("handled_clip", 0)
+        set(v) = sp.edit().putInt("handled_clip", v).apply()
 
     fun prompt(kind: PromptKind): String = sp.getString("prompt_${kind.key}", null) ?: kind.default
 
