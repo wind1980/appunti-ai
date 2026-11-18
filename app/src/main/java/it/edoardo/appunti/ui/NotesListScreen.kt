@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -39,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -67,6 +69,7 @@ import it.edoardo.appunti.data.Note
 import it.edoardo.appunti.data.NotesRepo
 import it.edoardo.appunti.data.Status
 import it.edoardo.appunti.data.Transcript
+import it.edoardo.appunti.whisper.Models
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -184,33 +187,57 @@ fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
 private fun RecordingBanner(rec: RecState) {
     val context = LocalContext.current
     when (rec) {
-        is RecState.Recording -> {
+        is RecState.Active -> {
             var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-            LaunchedEffect(rec.startedAt) {
+            LaunchedEffect(rec.paused, rec.resumedAt) {
                 while (true) {
                     now = SystemClock.elapsedRealtime()
                     delay(500)
                 }
             }
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Registrazione in corso", fontWeight = FontWeight.SemiBold)
-                        Text(Transcript.time(now - rec.startedAt), style = MaterialTheme.typography.headlineSmall)
+            val container = if (rec.paused) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer
+            Card(colors = CardDefaults.cardColors(containerColor = container)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text(
+                        if (rec.paused) "Registrazione in pausa" else "Registrazione in corso",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(Transcript.time(rec.elapsed(now)), style = MaterialTheme.typography.headlineSmall)
+                    if (!rec.paused) {
                         Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(
                             progress = { (rec.level * 3f).coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxWidth().height(4.dp),
                         )
+                    } else {
+                        Text(
+                            "Il microfono è spento. Riprendi quando vuoi: la registrazione continua nello stesso file.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
-                    Spacer(Modifier.width(16.dp))
-                    Button(
-                        onClick = { RecorderService.stop(context) },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Ferma")
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (rec.paused) {
+                            Button(onClick = { RecorderService.resume(context) }) {
+                                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Riprendi")
+                            }
+                        } else {
+                            OutlinedButton(onClick = { RecorderService.pause(context) }) {
+                                Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Pausa")
+                            }
+                        }
+                        Button(
+                            onClick = { RecorderService.stop(context) },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Termina e trascrivi")
+                        }
                     }
                 }
             }
@@ -230,6 +257,7 @@ private fun NoteRow(note: Note, onClick: () -> Unit) {
             val details = buildList {
                 add(Transcript.date(note.createdAt))
                 if (note.durationMs > 0) add(Transcript.time(note.durationMs))
+                Models.labelFor(note.modelName)?.let { add(it) }
             }.joinToString(" · ")
             Text(details, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             StatusLine(note)
@@ -240,10 +268,16 @@ private fun NoteRow(note: Note, onClick: () -> Unit) {
 @Composable
 fun StatusLine(note: Note) {
     when (note.status) {
-        Status.QUEUED -> Text("In coda per la trascrizione", style = MaterialTheme.typography.bodySmall)
+        Status.QUEUED -> Text(
+            if (note.improveModel != null) "Miglioramento in attesa" else "In coda per la trascrizione",
+            style = MaterialTheme.typography.bodySmall,
+        )
         Status.RUNNING -> Box(Modifier.padding(top = 6.dp)) {
             Column {
-                Text("Trascrizione ${note.progress}%", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    (if (note.improveModel != null) "Miglioramento " else "Trascrizione ") + "${note.progress}%",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 LinearProgressIndicator(progress = { note.progress / 100f }, modifier = Modifier.fillMaxWidth())
             }
         }

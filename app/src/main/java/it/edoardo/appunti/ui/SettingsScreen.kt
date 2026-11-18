@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -57,7 +59,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -65,6 +78,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var activeModel by remember { mutableStateOf(prefs.modelPath) }
+    var preciseModel by remember { mutableStateOf(prefs.preciseModelPath) }
     var tick by remember { mutableIntStateOf(0) }
     // Aggiorna lo stato dei download ogni secondo.
     LaunchedEffect(Unit) {
@@ -104,10 +118,11 @@ fun SettingsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Modello di trascrizione", style = MaterialTheme.typography.titleMedium)
+                Text("Modelli di trascrizione", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Si scarica una volta (serve internet), poi la trascrizione funziona offline. " +
-                        "Prova prima Small e misura quanto ci mette sul tuo telefono.",
+                    "Si scaricano una volta (serve internet), poi la trascrizione funziona offline. " +
+                        "Il modello \"principale\" trascrive subito ogni registrazione: meglio uno veloce, come Small. " +
+                        "Quello \"per Migliora\" rifà la trascrizione con più precisione quando lo chiedi dalla nota.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -116,8 +131,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                     val state = remember(tick) { Models.state(context, info) }
                     val path = Models.file(context, info).absolutePath
                     val isActive = activeModel == path
+                    val isPrecise = preciseModel == path
                     Card(
-                        colors = if (isActive) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        colors = if (isActive || isPrecise) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                         else CardDefaults.cardColors(),
                     ) {
                         Column(Modifier.padding(16.dp)) {
@@ -133,11 +149,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     LinearProgressIndicator(progress = { state.percent / 100f }, modifier = Modifier.fillMaxWidth())
                                     TextButton(onClick = { Models.cancelDownload(context, info) }) { Text("Annulla download (${state.percent}%)") }
                                 }
-                                ModelState.Ready -> Row {
+                                ModelState.Ready -> FlowRow {
                                     if (isActive) {
-                                        TextButton(onClick = {}, enabled = false) { Text("In uso") }
+                                        TextButton(onClick = {}, enabled = false) { Text("✓ Principale") }
                                     } else {
-                                        TextButton(onClick = { prefs.modelPath = path; activeModel = path }) { Text("Usa questo") }
+                                        TextButton(onClick = { prefs.modelPath = path; activeModel = path }) { Text("Usa come principale") }
+                                    }
+                                    if (isPrecise) {
+                                        TextButton(onClick = { prefs.preciseModelPath = null; preciseModel = null }) { Text("✓ Per Migliora (togli)") }
+                                    } else {
+                                        TextButton(onClick = { prefs.preciseModelPath = path; preciseModel = path }) { Text("Usa per Migliora") }
+                                    }
+                                    if (!isActive && !isPrecise) {
                                         TextButton(onClick = { File(path).delete(); tick++ }) { Text("Elimina") }
                                     }
                                 }
@@ -156,10 +179,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Column {
                     imported.forEach { f ->
                         val isActive = activeModel == f.absolutePath
+                        val isPrecise = preciseModel == f.absolutePath
+                        Text("${f.name} · ${f.length() / 1_048_576} MB")
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${f.name} · ${f.length() / 1_048_576} MB", modifier = Modifier.weight(1f))
-                            if (isActive) Text("In uso", color = MaterialTheme.colorScheme.primary)
-                            else TextButton(onClick = { prefs.modelPath = f.absolutePath; activeModel = f.absolutePath }) { Text("Usa") }
+                            if (isActive) Text("✓ Principale  ", color = MaterialTheme.colorScheme.primary)
+                            else TextButton(onClick = { prefs.modelPath = f.absolutePath; activeModel = f.absolutePath }) { Text("Principale") }
+                            if (isPrecise) Text("✓ Per Migliora", color = MaterialTheme.colorScheme.primary)
+                            else TextButton(onClick = { prefs.preciseModelPath = f.absolutePath; preciseModel = f.absolutePath }) { Text("Per Migliora") }
                         }
                     }
                     OutlinedButton(onClick = { importModel.launch(arrayOf("*/*")) }) { Text("Importa un modello .bin…") }
@@ -168,6 +194,50 @@ fun SettingsScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+            }
+
+            item { HorizontalDivider() }
+            item {
+                Text("Velocità", style = MaterialTheme.typography.titleMedium)
+            }
+            item {
+                var skip by remember { mutableStateOf(prefs.skipSilence) }
+                val vadState = remember(tick) { Models.state(context, Models.vad) }
+                SwitchRow(
+                    title = "Salta silenzi e pause",
+                    subtitle = when (vadState) {
+                        ModelState.Ready -> "Trascrive solo le parti parlate. Molto utile per riunioni e registrazioni con pause."
+                        is ModelState.Downloading -> "Download del rilevatore di voce: ${vadState.percent}%"
+                        else -> "Serve il rilevatore di voce (circa 1 MB): si scarica da solo, oppure tocca Scarica."
+                    },
+                    checked = skip,
+                    onChange = {
+                        skip = it
+                        prefs.skipSilence = it
+                        if (it) Models.ensureVad(context)
+                    },
+                )
+                if (skip && (vadState is ModelState.Missing || vadState is ModelState.Failed)) {
+                    TextButton(onClick = { Models.download(context, Models.vad); tick++ }) { Text("Scarica il rilevatore di voce") }
+                }
+            }
+            item {
+                var retry by remember { mutableStateOf(prefs.retryHardParts) }
+                SwitchRow(
+                    title = "Ritenta i pezzi difficili",
+                    subtitle = "Se un pezzo è disturbato Whisper lo rifà più volte: un po' più preciso, ma anche molto più lento. Consigliato spento.",
+                    checked = retry,
+                    onChange = { retry = it; prefs.retryHardParts = it },
+                )
+            }
+            item {
+                var charging by remember { mutableStateOf(prefs.improveOnlyCharging) }
+                SwitchRow(
+                    title = "\"Migliora\" solo in carica",
+                    subtitle = "Il miglioramento con il modello preciso parte quando metti il telefono in carica.",
+                    checked = charging,
+                    onChange = { charging = it; prefs.improveOnlyCharging = it },
+                )
             }
 
             item { HorizontalDivider() }
@@ -220,16 +290,12 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { HorizontalDivider() }
             item {
                 var asFile by remember { mutableStateOf(prefs.alwaysAsFile) }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Manda sempre la trascrizione come file", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Altrimenti va nel messaggio, e diventa un file .txt solo se è lunga.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Switch(checked = asFile, onCheckedChange = { asFile = it; prefs.alwaysAsFile = it })
-                }
+                SwitchRow(
+                    title = "Manda sempre la trascrizione come file",
+                    subtitle = "Altrimenti va nel messaggio, e diventa un file .txt solo se è lunga.",
+                    checked = asFile,
+                    onChange = { asFile = it; prefs.alwaysAsFile = it },
+                )
             }
             item {
                 Text("Prompt per Claude", style = MaterialTheme.typography.titleMedium)

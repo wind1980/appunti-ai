@@ -14,6 +14,8 @@ data class ModelInfo(
     val sizeMb: Int,
     val description: String,
     val url: String,
+    /** Sotto questa dimensione il file è considerato incompleto. */
+    val minBytes: Long = sizeMb * 1024L * 1024L * 8 / 10,
 )
 
 sealed interface ModelState {
@@ -47,6 +49,30 @@ object Models {
         ),
     )
 
+    /** Rilevatore di voce Silero: serve per saltare silenzi e pause. */
+    val vad = ModelInfo(
+        "ggml-silero-v6.2.0.bin", "Rilevatore di voce", 1,
+        "Fa saltare silenzi e pause: trascrizione più veloce.",
+        "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+        minBytes = 100_000,
+    )
+
+    /** Percorso del rilevatore di voce se è già scaricato, altrimenti null. */
+    fun vadPath(context: Context): String? =
+        if (state(context, vad) is ModelState.Ready) file(context, vad).absolutePath else null
+
+    /** Scarica il rilevatore di voce se manca (è piccolo, circa 1 MB). */
+    fun ensureVad(context: Context) {
+        if (state(context, vad) is ModelState.Missing) download(context, vad)
+    }
+
+    /** Nome leggibile di un modello a partire dal percorso del file. */
+    fun labelFor(path: String?): String? {
+        if (path == null) return null
+        val name = File(path).name
+        return catalog.firstOrNull { it.fileName == name }?.label ?: name.removeSuffix(".bin")
+    }
+
     fun dir(context: Context): File =
         File(context.getExternalFilesDir(null) ?: context.filesDir, "models").apply { mkdirs() }
 
@@ -54,7 +80,7 @@ object Models {
 
     /** Modelli importati a mano dall'utente (file .bin non presenti nel catalogo). */
     fun imported(context: Context): List<File> {
-        val known = catalog.map { it.fileName }.toSet()
+        val known = (catalog + vad).map { it.fileName }.toSet()
         return dir(context).listFiles { f -> f.isFile && f.name.endsWith(".bin") && f.name !in known }
             ?.sortedBy { it.name } ?: emptyList()
     }
@@ -103,7 +129,7 @@ object Models {
             }
         }
         val f = file(context, info)
-        return if (f.exists() && f.length() > info.sizeMb * 1024L * 1024L * 8 / 10) ModelState.Ready else ModelState.Missing
+        return if (f.exists() && f.length() >= info.minBytes) ModelState.Ready else ModelState.Missing
     }
 
     /** Copia un file .bin scelto dall'utente nella cartella dei modelli. Restituisce il file copiato. */

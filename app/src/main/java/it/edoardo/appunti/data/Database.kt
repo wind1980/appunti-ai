@@ -12,6 +12,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 object Status {
@@ -39,6 +41,10 @@ data class Note(
     /** Campioni (16 kHz) già trascritti: permette di riprendere dopo un'interruzione. */
     val processedSamples: Long = 0,
     val error: String? = null,
+    /** File del modello usato per la trascrizione attuale. */
+    val modelName: String? = null,
+    /** Se non null, è in corso un "Migliora" con questo modello: il testo attuale resta finché non finisce. */
+    val improveModel: String? = null,
 )
 
 @Entity(
@@ -93,6 +99,22 @@ interface NoteDao {
     @Query("UPDATE notes SET segments = :segments, processedSamples = :processed WHERE id = :id")
     suspend fun setSegments(id: Long, segments: String, processed: Long)
 
+    @Query("UPDATE notes SET improveModel = :model WHERE id = :id")
+    suspend fun setImprove(id: Long, model: String?)
+
+    @Query("UPDATE notes SET modelName = :model WHERE id = :id")
+    suspend fun setModelName(id: Long, model: String?)
+
+    /** Sostituisce in un colpo solo la trascrizione (usato alla fine di "Migliora"). */
+    @Query(
+        """UPDATE notes SET segments = :segments, processedSamples = :processed, modelName = :model,
+           improveModel = NULL, status = 'done', progress = 100, error = NULL WHERE id = :id"""
+    )
+    suspend fun replaceTranscript(id: Long, segments: String, processed: Long, model: String?)
+
+    @Query("SELECT audioPath FROM notes WHERE audioPath IS NOT NULL")
+    suspend fun audioPaths(): List<String>
+
     @Query("UPDATE notes SET durationMs = :durationMs WHERE id = :id")
     suspend fun setDuration(id: Long, durationMs: Long)
 
@@ -112,12 +134,22 @@ interface NoteDao {
     suspend fun deleteResponse(response: ClaudeResponse)
 }
 
-@Database(entities = [Note::class, ClaudeResponse::class], version = 1, exportSchema = false)
+@Database(entities = [Note::class, ClaudeResponse::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
 
     companion object {
+        /** 0.1 → 0.2: modello usato e "Migliora" in corso. Le note esistenti restano. */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN modelName TEXT")
+                db.execSQL("ALTER TABLE notes ADD COLUMN improveModel TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "appunti.db").build()
+            Room.databaseBuilder(context, AppDatabase::class.java, "appunti.db")
+                .addMigrations(MIGRATION_1_2)
+                .build()
     }
 }

@@ -16,7 +16,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import it.edoardo.appunti.audio.RecState
+import it.edoardo.appunti.audio.RecorderService
 import it.edoardo.appunti.data.NotesRepo
+import it.edoardo.appunti.whisper.Models
 import it.edoardo.appunti.ui.AppuntiTheme
 import it.edoardo.appunti.ui.NoteScreen
 import it.edoardo.appunti.ui.NotesListScreen
@@ -32,6 +35,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) handleShare(intent)
+
+        lifecycleScope.launch {
+            // Registrazioni interrotte (app chiusa dal sistema, telefono spento): diventano note.
+            if (RecorderService.state.value is RecState.Idle) NotesRepo.recoverOrphans(applicationContext)
+            // Il rilevatore di voce pesa circa 1 MB: si scarica da solo se serve.
+            if (app.prefs.skipSilence) Models.ensureVad(applicationContext)
+        }
 
         setContent {
             AppuntiTheme {

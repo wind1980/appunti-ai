@@ -104,7 +104,8 @@ JNIEXPORT jbyteArray JNICALL
 Java_it_edoardo_appunti_whisper_WhisperNative_transcribe(
         JNIEnv *env, jobject,
         jlong ptr, jfloatArray samples, jint numSamples,
-        jstring language, jint threads, jstring initialPrompt, jobject listener) {
+        jstring language, jint threads, jstring initialPrompt,
+        jstring vadModelPath, jboolean noFallback, jobject listener) {
 
     auto *ctx = reinterpret_cast<struct whisper_context *>(ptr);
     if (ctx == nullptr) return nullptr;
@@ -123,6 +124,7 @@ Java_it_edoardo_appunti_whisper_WhisperNative_transcribe(
 
     const char *lang = env->GetStringUTFChars(language, nullptr);
     const char *prompt = initialPrompt ? env->GetStringUTFChars(initialPrompt, nullptr) : nullptr;
+    const char *vad = vadModelPath ? env->GetStringUTFChars(vadModelPath, nullptr) : nullptr;
 
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads = threads;
@@ -141,6 +143,20 @@ Java_it_edoardo_appunti_whisper_WhisperNative_transcribe(
     params.abort_callback = abort_cb;
     params.abort_callback_user_data = &cb;
 
+    // Niente ritentativi a temperatura più alta sui pezzi difficili: molto più veloce
+    // sull'audio rumoroso, a costo di qualche errore in più proprio su quei pezzi.
+    if (noFallback) params.temperature_inc = 0.0f;
+
+    // Rilevatore di voce (Silero): trascrive solo le parti parlate, saltando silenzi e pause.
+    // whisper.cpp riporta i tempi dei segmenti sull'audio originale.
+    if (vad != nullptr && vad[0] != '\0') {
+        params.vad = true;
+        params.vad_model_path = vad;
+        params.vad_params = whisper_vad_default_params();
+        params.vad_params.min_silence_duration_ms = 300;
+        params.vad_params.speech_pad_ms = 200;
+    }
+
     jfloat *data = env->GetFloatArrayElements(samples, nullptr);
     int n = numSamples;
     jsize arrLen = env->GetArrayLength(samples);
@@ -149,6 +165,13 @@ Java_it_edoardo_appunti_whisper_WhisperNative_transcribe(
     g_cancel.store(false);
     whisper_reset_timings(ctx);
     int rc = whisper_full(ctx, params, data, n);
+    if (rc != 0 && params.vad && !cb.cancelled.load() && !g_cancel.load()) {
+        // Se il rilevatore di voce non funziona (file mancante o rovinato) si trascrive tutto.
+        LOGW("VAD non riuscito (codice %d): trascrivo senza", rc);
+        params.vad = false;
+        params.vad_model_path = nullptr;
+        rc = whisper_full(ctx, params, data, n);
+    }
     env->ReleaseFloatArrayElements(samples, data, JNI_ABORT);
 
     jbyteArray result = nullptr;
@@ -177,6 +200,7 @@ Java_it_edoardo_appunti_whisper_WhisperNative_transcribe(
 
     env->ReleaseStringUTFChars(language, lang);
     if (prompt != nullptr) env->ReleaseStringUTFChars(initialPrompt, prompt);
+    if (vad != nullptr) env->ReleaseStringUTFChars(vadModelPath, vad);
     return result;
 }
 

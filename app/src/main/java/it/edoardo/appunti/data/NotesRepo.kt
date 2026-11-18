@@ -3,16 +3,22 @@ package it.edoardo.appunti.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import it.edoardo.appunti.app
+import it.edoardo.appunti.audio.SAMPLE_RATE
+import it.edoardo.appunti.audio.Wav
 import it.edoardo.appunti.whisper.WhisperNative
 import it.edoardo.appunti.work.TranscriptionWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object NotesRepo {
 
@@ -42,10 +48,20 @@ object NotesRepo {
         addAudioNote(context, title, dest, System.currentTimeMillis(), 0)
     }
 
-    fun enqueue(context: Context, id: Long) {
+    fun enqueue(context: Context, id: Long, improveModelPath: String? = null, onlyCharging: Boolean = false) {
+        val data = if (improveModelPath != null) {
+            workDataOf(
+                TranscriptionWorker.KEY_NOTE_ID to id,
+                TranscriptionWorker.KEY_IMPROVE to true,
+                TranscriptionWorker.KEY_MODEL_PATH to improveModelPath,
+            )
+        } else {
+            workDataOf(TranscriptionWorker.KEY_NOTE_ID to id)
+        }
         val req = OneTimeWorkRequestBuilder<TranscriptionWorker>()
-            .setInputData(workDataOf(TranscriptionWorker.KEY_NOTE_ID to id))
+            .setInputData(data)
             .addTag(TranscriptionWorker.TAG)
+            .apply { if (onlyCharging) setConstraints(Constraints.Builder().setRequiresCharging(true).build()) }
             .build()
         // Un lavoro per nota; il worker usa un lucchetto globale, quindi le trascrizioni
         // girano comunque una alla volta.
@@ -54,9 +70,24 @@ object NotesRepo {
 
     suspend fun retranscribe(context: Context, id: Long) {
         val dao = context.app.db.notes()
+        dao.setImprove(id, null)
         dao.setSegments(id, "", 0)
         dao.setStatus(id, Status.QUEUED, 0, null)
         enqueue(context, id)
+    }
+
+    /**
+     * Ritrascrive con il modello "preciso" scelto nelle Impostazioni. Il testo attuale resta
+     * finché il nuovo non è pronto. Restituisce false se non c'è un modello preciso.
+     */
+    suspend fun improve(context: Context, id: Long): Boolean {
+        val prefs = context.app.prefs
+        val model = prefs.preciseModelPath ?: return false
+        val dao = context.app.db.notes()
+        dao.setImprove(id, File(model).name)
+        dao.setStatus(id, Status.QUEUED, 0, null)
+        enqueue(context, id, improveModelPath = model, onlyCharging = prefs.improveOnlyCharging)
+        return true
     }
 
     suspend fun resume(context: Context, id: Long) {
@@ -66,11 +97,40 @@ object NotesRepo {
 
     suspend fun cancel(context: Context, id: Long) {
         val dao = context.app.db.notes()
-        val wasRunning = dao.get(id)?.status == Status.RUNNING
+        val note = dao.get(id) ?: return
+        val wasRunning = note.status == Status.RUNNING
         // Prima lo stato, così il worker capisce che è stato l'utente ad annullare.
-        dao.setStatus(id, Status.CANCELLED, 0, null)
+        if (note.improveModel != null) {
+            // Annullare "Migliora" lascia la trascrizione di prima.
+            dao.setImprove(id, null)
+            dao.setStatus(id, Status.DONE, 100, null)
+        } else {
+            dao.setStatus(id, Status.CANCELLED, 0, null)
+        }
         WorkManager.getInstance(context).cancelUniqueWork(workName(id))
         if (wasRunning) WhisperNative.cancel()
+    }
+
+    /**
+     * Registrazioni rimaste senza nota (app chiusa dal sistema o telefono spento durante
+     * la registrazione): le trasforma in note e le mette in coda.
+     */
+    suspend fun recoverOrphans(context: Context) = withContext(Dispatchers.IO) {
+        val dir = File(context.filesDir, "audio")
+        val files = dir.listFiles { f -> f.name.startsWith("rec-") && f.name.endsWith(".wav") } ?: return@withContext
+        val known = context.app.db.notes().audioPaths().toSet()
+        for (f in files) {
+            if (f.absolutePath in known) continue
+            val header = Wav.readHeader(f)
+            val durationMs = (header?.dataBytes ?: 0L) / 2 * 1000 / SAMPLE_RATE
+            if (durationMs < 1000) {
+                f.delete()
+                continue
+            }
+            val title = "Registrazione recuperata " +
+                SimpleDateFormat("d MMM HH:mm", Locale.ITALIAN).format(Date(f.lastModified()))
+            addAudioNote(context, title, f, f.lastModified(), durationMs)
+        }
     }
 
     suspend fun delete(context: Context, note: Note) {

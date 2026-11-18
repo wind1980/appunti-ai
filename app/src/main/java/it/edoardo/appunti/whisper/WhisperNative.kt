@@ -29,6 +29,10 @@ object WhisperNative {
         language: String,
         threads: Int,
         initialPrompt: String?,
+        /** Percorso del modello Silero per saltare i silenzi, oppure null. */
+        vadModelPath: String?,
+        /** true = niente ritentativi sui pezzi difficili (più veloce). */
+        noFallback: Boolean,
         listener: TranscribeListener,
     ): ByteArray?
 }

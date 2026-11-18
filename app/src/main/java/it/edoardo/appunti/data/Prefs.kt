@@ -36,6 +36,26 @@ class Prefs(context: Context) {
         get() = sp.getString("model_path", null)?.takeIf { File(it).exists() }
         set(v) = sp.edit().putString("model_path", v).apply()
 
+    /** Modello più preciso (e lento) usato dal comando "Migliora trascrizione". */
+    var preciseModelPath: String?
+        get() = sp.getString("precise_model_path", null)?.takeIf { File(it).exists() }
+        set(v) = sp.edit().putString("precise_model_path", v).apply()
+
+    /** "Migliora" parte solo quando il telefono è in carica. */
+    var improveOnlyCharging: Boolean
+        get() = sp.getBoolean("improve_charging", true)
+        set(v) = sp.edit().putBoolean("improve_charging", v).apply()
+
+    /** Salta silenzi e pause con il rilevatore di voce. */
+    var skipSilence: Boolean
+        get() = sp.getBoolean("skip_silence", true)
+        set(v) = sp.edit().putBoolean("skip_silence", v).apply()
+
+    /** Ritenta i pezzi difficili a temperatura più alta (più preciso ma molto più lento). */
+    var retryHardParts: Boolean
+        get() = sp.getBoolean("retry_hard", false)
+        set(v) = sp.edit().putBoolean("retry_hard", v).apply()
+
     /** Codice lingua per Whisper: "it", "en" oppure "auto". */
     var language: String
         get() = sp.getString("language", "it") ?: "it"

@@ -1,10 +1,18 @@
-# Appunti AI – versione 0.1
+# Appunti AI – versione 0.2
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
 
-## Cosa fa questa versione
+## Novità della 0.2
 
-- **Registra** dal microfono, anche a schermo spento (notifica con "Ferma e trascrivi").
+- **Pausa e ripresa**: la registrazione si mette in pausa e si riprende quante volte vuoi (dall'app o dalla notifica). Va in trascrizione solo quando tocchi "Termina e trascrivi".
+- **Salta silenzi e pause** con il rilevatore di voce Silero (1 MB, si scarica da solo): trascrizione molto più veloce.
+- **Niente ritentativi** sui pezzi disturbati (si possono riattivare nelle Impostazioni).
+- **Veloce subito, preciso dopo**: un modello "principale" veloce trascrive subito; dal menu della nota "Migliora" rifà la trascrizione con il modello preciso, anche solo quando il telefono è in carica. Il testo vecchio resta finché il nuovo non è pronto.
+- **Recupero**: se l'app viene chiusa durante una registrazione, all'apertura successiva la registrazione diventa una nota.
+
+## Cosa fa
+
+- **Registra** dal microfono, anche a schermo spento, con pausa e ripresa.
 - **Importa** audio e video: dal pulsante in alto o dal menu Condividi di altre app (WhatsApp, registratore, galleria) → "Trascrivi con Appunti".
 - **Trascrive offline** a blocchi di 5 minuti, in background. Il testo compare man mano. Se Android interrompe il lavoro, riparte dall'ultimo blocco.
 - **Manda a Claude** con quattro pulsanti: Riassumi, Traduci, Mappa mentale, Chiedi. Le trascrizioni lunghe partono come file `.txt` allegato.

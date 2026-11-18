@@ -74,6 +74,7 @@ import it.edoardo.appunti.data.PromptKind
 import it.edoardo.appunti.data.Status
 import it.edoardo.appunti.data.Transcript
 import it.edoardo.appunti.share.ClaudeShare
+import it.edoardo.appunti.whisper.Models
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -117,6 +118,26 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                                 ClaudeShare.shareText(context, n.title, Transcript.readable(n))
                             },
                         )
+                        if (n.audioPath != null && hasText && n.status == Status.DONE) {
+                            val precise = context.app.prefs.preciseModelPath
+                            val label = Models.labelFor(precise)
+                            DropdownMenuItem(
+                                text = { Text(if (label != null) "Migliora con $label" else "Migliora trascrizione…") },
+                                onClick = {
+                                    menu = false
+                                    if (precise == null) {
+                                        Toast.makeText(
+                                            context,
+                                            "Scegli prima il modello per \"Migliora\" nelle Impostazioni",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                        onSettings()
+                                    } else {
+                                        scope.launch { NotesRepo.improve(context, n.id) }
+                                    }
+                                },
+                            )
+                        }
                         if (n.audioPath != null && n.status != Status.RUNNING && n.status != Status.QUEUED) DropdownMenuItem(
                             text = { Text("Trascrivi di nuovo") },
                             onClick = { menu = false; scope.launch { NotesRepo.retranscribe(context, n.id) } },
@@ -137,6 +158,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                     buildList {
                         add(Transcript.date(n.createdAt))
                         if (n.durationMs > 0) add(Transcript.time(n.durationMs))
+                        Models.labelFor(n.modelName)?.let { add("trascritta con $it") }
                     }.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -252,8 +274,17 @@ private fun StatusCard(n: Note, onSettings: () -> Unit) {
     when (n.status) {
         Status.QUEUED, Status.RUNNING -> Card {
             Column(Modifier.padding(16.dp)) {
+                val improving = n.improveModel != null
+                val label = Models.labelFor(n.improveModel)
                 Text(
-                    if (n.status == Status.QUEUED) "In coda per la trascrizione" else "Trascrizione sul telefono: ${n.progress}%",
+                    when {
+                        improving && n.status == Status.QUEUED ->
+                            if (context.app.prefs.improveOnlyCharging) "Miglioramento con $label: parte quando metti il telefono in carica"
+                            else "Miglioramento con $label in coda"
+                        improving -> "Miglioramento con $label: ${n.progress}%"
+                        n.status == Status.QUEUED -> "In coda per la trascrizione"
+                        else -> "Trascrizione sul telefono: ${n.progress}%"
+                    },
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -263,7 +294,8 @@ private fun StatusCard(n: Note, onSettings: () -> Unit) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 Text(
-                    "Il testo compare qui man mano. Puoi chiudere l'app: la trascrizione continua.",
+                    if (improving) "Intanto puoi usare la trascrizione attuale: verrà sostituita solo a lavoro finito."
+                    else "Il testo compare qui man mano. Puoi chiudere l'app: la trascrizione continua.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 8.dp),
                 )
@@ -290,6 +322,9 @@ private fun StatusCard(n: Note, onSettings: () -> Unit) {
                     TextButton(onClick = { scope.launch { NotesRepo.retranscribe(context, n.id) } }) { Text("Ricomincia") }
                 }
             }
+        }
+        Status.DONE -> if (n.error != null) {
+            Text(n.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         else -> Unit
     }
