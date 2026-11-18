@@ -1,26 +1,38 @@
 package it.edoardo.appunti.ui
 
 import android.content.ClipboardManager
+import android.content.Context
 import android.media.MediaPlayer
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -29,25 +41,22 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -57,11 +66,15 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
@@ -79,7 +92,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Azioni della barra Claude, nell'ordine in cui compaiono. */
+private val BAR_ACTIONS = listOf(PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.MINDMAP, PromptKind.TRANSLATE, PromptKind.EMAIL)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
@@ -89,21 +105,35 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
     val note by remember(id) { dao.observe(id) }.collectAsStateWithLifecycle(initialValue = null)
     val responses by remember(id) { dao.observeResponses(id) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val n = note ?: run {
-        Scaffold { p -> Text("Caricamento…", Modifier.padding(p).padding(16.dp)) }
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         return
     }
     val paragraphs = remember(n.segments) { Transcript.paragraphs(Transcript.parse(n.segments)) }
     val hasText = paragraphs.isNotEmpty()
 
+    // 0 = Riepilogo AI, 1 = Trascrizione. Si apre sulla trascrizione finché non ci sono risposte.
+    var tab by rememberSaveable { mutableIntStateOf(-1) }
+    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) 1 else 0
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val player = rememberPlayer(n.audioPath)
 
+    fun send(kind: PromptKind, question: String? = null) {
+        if (!hasText) {
+            Toast.makeText(context, "La trascrizione non è ancora pronta", Toast.LENGTH_SHORT).show()
+            return
+        }
+        ClaudeShare.share(context, n, kind, question)
+        tab = 0 // al ritorno si è già sulla scheda dove incollare la risposta
+    }
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(n.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                title = { Text(n.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro") }
                 },
@@ -111,13 +141,16 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Altro") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Rinomina") }, onClick = { menu = false; renaming = true })
-                        if (hasText) DropdownMenuItem(
-                            text = { Text("Condividi trascrizione…") },
-                            onClick = {
-                                menu = false
-                                ClaudeShare.shareText(context, n.title, Transcript.readable(n))
-                            },
-                        )
+                        if (hasText) {
+                            DropdownMenuItem(
+                                text = { Text("Copia trascrizione") },
+                                onClick = { menu = false; ClaudeShare.copy(context, n.title, Transcript.readable(n)) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Condividi trascrizione…") },
+                                onClick = { menu = false; ClaudeShare.shareText(context, n.title, Transcript.readable(n)) },
+                            )
+                        }
                         if (n.audioPath != null && hasText && n.status == Status.DONE) {
                             val precise = context.app.prefs.preciseModelPath
                             val label = Models.labelFor(precise)
@@ -126,11 +159,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                                 onClick = {
                                     menu = false
                                     if (precise == null) {
-                                        Toast.makeText(
-                                            context,
-                                            "Scegli prima il modello per \"Migliora\" nelle Impostazioni",
-                                            Toast.LENGTH_LONG,
-                                        ).show()
+                                        Toast.makeText(context, "Scegli prima il modello per \"Migliora\" nelle Impostazioni", Toast.LENGTH_LONG).show()
                                         onSettings()
                                     } else {
                                         scope.launch { NotesRepo.improve(context, n.id) }
@@ -147,10 +176,13 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                 },
             )
         },
+        bottomBar = {
+            ClaudeBar(enabled = hasText, player = player, onAction = { send(it) }, onAsk = { q -> send(PromptKind.ASK, q) })
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
@@ -158,62 +190,46 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                     buildList {
                         add(Transcript.date(n.createdAt))
                         if (n.durationMs > 0) add(Transcript.time(n.durationMs))
-                        Models.labelFor(n.modelName)?.let { add("trascritta con $it") }
+                        Models.labelFor(n.modelName)?.let { add(it) }
                     }.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             item { StatusCard(n, onSettings) }
-            if (player != null) item { PlayerBar(player) }
-
-            if (hasText) item {
-                Column {
-                    Text("Manda a Claude", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PromptKind.entries.forEach { kind ->
-                            FilledTonalButton(onClick = { ClaudeShare.share(context, n, kind) }) { Text(kind.label) }
-                        }
-                        OutlinedButton(onClick = { ClaudeShare.copy(context, n.title, Transcript.readable(n)) }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Copia testo")
-                        }
-                    }
-                }
-            }
-
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Risposte di Claude", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = {
-                        val text = context.getSystemService<ClipboardManager>()?.primaryClip
-                            ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                        if (text.isNullOrBlank()) {
-                            Toast.makeText(context, "Gli appunti sono vuoti: copia prima la risposta in Claude", Toast.LENGTH_LONG).show()
-                        } else {
-                            scope.launch { NotesRepo.saveResponse(context, n.id, text) }
-                        }
-                    }) {
-                        Icon(Icons.Default.ContentPaste, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Incolla")
-                    }
-                }
-                if (responses.isEmpty()) Text(
-                    "In Claude copia la risposta e tocca \"Incolla\", oppure seleziona il testo e scegli Condividi → \"Salva in Appunti\".",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                SegmentedTabs(
+                    labels = listOf("Riepilogo AI", "Trascrizione"),
+                    selected = selectedTab,
+                    onSelect = { tab = it },
                 )
             }
-            items(responses, key = { "r${it.id}" }) { r -> ResponseCard(n, r) }
 
-            if (hasText) {
+            if (selectedTab == 0) {
                 item {
-                    HorizontalDivider()
-                    Spacer(Modifier.height(8.dp))
-                    Text("Trascrizione", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (responses.isEmpty()) "" else "Risposte di Claude",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { pasteResponse(context) { text -> scope.launch { NotesRepo.saveResponse(context, n.id, text) } } }) {
+                            Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Incolla risposta")
+                        }
+                    }
+                }
+                if (responses.isEmpty()) item { EmptySummary(hasText) { send(PromptKind.SUMMARY) } }
+                items(responses, key = { "r${it.id}" }) { r -> ResponseCard(n, r) }
+            } else {
+                if (!hasText) item {
+                    Text(
+                        if (n.status == Status.RUNNING || n.status == Status.QUEUED) "Il testo comparirà qui man mano che la trascrizione procede."
+                        else "Nessuna trascrizione.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
                 }
                 items(paragraphs.size) { i ->
                     val p = paragraphs[i]
@@ -222,10 +238,13 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                             Transcript.time(p.startMs),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(vertical = 2.dp).let { m ->
-                                if (player != null) m.clickable { player.seekAndPlay(p.startMs) } else m
-                            },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .let { m -> if (player != null) m.clickable { player.seekAndPlay(p.startMs) } else m }
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
                         )
+                        Spacer(Modifier.height(4.dp))
                         SelectionContainer { Text(p.text, style = MaterialTheme.typography.bodyLarge) }
                     }
                 }
@@ -267,64 +286,206 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
     }
 }
 
+private fun pasteResponse(context: Context, onText: (String) -> Unit) {
+    val text = context.getSystemService<ClipboardManager>()?.primaryClip
+        ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+    if (text.isNullOrBlank()) {
+        Toast.makeText(context, "Gli appunti sono vuoti: in Claude copia prima la risposta", Toast.LENGTH_LONG).show()
+    } else {
+        onText(text)
+        Toast.makeText(context, "Risposta salvata", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Barra fissa in basso: lettore audio, funzioni Claude a un tocco e domanda libera. */
+@Composable
+private fun ClaudeBar(enabled: Boolean, player: Player?, onAction: (PromptKind) -> Unit, onAsk: (String) -> Unit) {
+    val context = LocalContext.current
+    var question by rememberSaveable { mutableStateOf("") }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        shadowElevation = 12.dp,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            Modifier
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(top = 8.dp, bottom = 10.dp),
+        ) {
+            if (player != null) PlayerBar(player)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                BAR_ACTIONS.forEach { kind ->
+                    ActionTile(kind.icon(), kind.label, enabled) { onAction(kind) }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = question,
+                    onValueChange = { question = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Chiedi a Claude su questa nota…") },
+                    shape = RoundedCornerShape(28.dp),
+                    maxLines = 3,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        if (question.isNotBlank()) { onAsk(question); question = "" }
+                    }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        unfocusedBorderColor = Color.Transparent,
+                    ),
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(BrandGradient)
+                        .clickable {
+                            if (question.isBlank()) {
+                                Toast.makeText(context, "Scrivi prima la domanda per Claude", Toast.LENGTH_SHORT).show()
+                            } else {
+                                onAsk(question)
+                                question = ""
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Chiedi a Claude", tint = Color.White)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(4.dp),
+    ) {
+        labels.forEachIndexed { i, label ->
+            val isSel = i == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSel) MaterialTheme.colorScheme.surfaceContainerLowest else Color.Transparent)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptySummary(hasText: Boolean, onSummarize: () -> Unit) {
+    AppCard {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(56.dp).clip(CircleShape).background(BrandGradient),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("Nessun riepilogo ancora", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (hasText) "Tocca Riassumi: si apre Claude con la trascrizione già pronta, tu premi Invia. " +
+                    "Poi copia la risposta, torna qui e tocca \"Incolla risposta\"."
+                else "Quando la trascrizione è pronta potrai mandarla a Claude da qui.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            GradientButton("Riassumi con Claude", Icons.Default.AutoAwesome, onSummarize, enabled = hasText)
+        }
+    }
+}
+
 @Composable
 private fun StatusCard(n: Note, onSettings: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val cs = MaterialTheme.colorScheme
     when (n.status) {
-        Status.QUEUED, Status.RUNNING -> Card {
-            Column(Modifier.padding(16.dp)) {
-                val improving = n.improveModel != null
-                val label = Models.labelFor(n.improveModel)
-                Text(
-                    when {
-                        improving && n.status == Status.QUEUED ->
-                            if (context.app.prefs.improveOnlyCharging) "Miglioramento con $label: parte quando metti il telefono in carica"
-                            else "Miglioramento con $label in coda"
-                        improving -> "Miglioramento con $label: ${n.progress}%"
-                        n.status == Status.QUEUED -> "In coda per la trascrizione"
-                        else -> "Trascrizione sul telefono: ${n.progress}%"
-                    },
-                    fontWeight = FontWeight.SemiBold,
+        Status.QUEUED, Status.RUNNING -> AppCard(color = cs.primaryContainer) {
+            val improving = n.improveModel != null
+            val label = Models.labelFor(n.improveModel)
+            Text(
+                when {
+                    improving && n.status == Status.QUEUED ->
+                        if (context.app.prefs.improveOnlyCharging) "Miglioramento con $label: parte quando metti il telefono in carica"
+                        else "Miglioramento con $label in coda"
+                    improving -> "Miglioramento con $label: ${n.progress}%"
+                    n.status == Status.QUEUED -> "In coda per la trascrizione"
+                    else -> "Trascrizione sul telefono: ${n.progress}%"
+                },
+                style = MaterialTheme.typography.titleSmall,
+                color = cs.onPrimaryContainer,
+            )
+            Spacer(Modifier.height(10.dp))
+            if (n.status == Status.RUNNING) {
+                LinearProgressIndicator(
+                    progress = { n.progress / 100f },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
                 )
-                Spacer(Modifier.height(8.dp))
-                if (n.status == Status.RUNNING) {
-                    LinearProgressIndicator(progress = { n.progress / 100f }, modifier = Modifier.fillMaxWidth())
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                 Text(
-                    if (improving) "Intanto puoi usare la trascrizione attuale: verrà sostituita solo a lavoro finito."
-                    else "Il testo compare qui man mano. Puoi chiudere l'app: la trascrizione continua.",
+                    if (improving) "Intanto puoi usare la trascrizione attuale."
+                    else "Puoi chiudere l'app: la trascrizione continua.",
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 8.dp),
+                    color = cs.onPrimaryContainer,
+                    modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = { scope.launch { NotesRepo.cancel(context, n.id) } }) { Text("Annulla") }
             }
         }
-        Status.ERROR -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Trascrizione non riuscita", fontWeight = FontWeight.SemiBold)
-                Text(n.error ?: "Errore sconosciuto")
-                Row {
-                    TextButton(onClick = { scope.launch { NotesRepo.resume(context, n.id) } }) { Text("Riprova") }
-                    TextButton(onClick = onSettings) { Text("Impostazioni") }
-                }
+        Status.ERROR -> AppCard(color = cs.errorContainer) {
+            Text("Trascrizione non riuscita", style = MaterialTheme.typography.titleSmall, color = cs.onErrorContainer)
+            Text(n.error ?: "Errore sconosciuto", color = cs.onErrorContainer)
+            Row {
+                TextButton(onClick = { scope.launch { NotesRepo.resume(context, n.id) } }) { Text("Riprova") }
+                TextButton(onClick = onSettings) { Text("Impostazioni") }
             }
         }
-        Status.CANCELLED -> Card {
-            Column(Modifier.padding(16.dp)) {
-                Text("Trascrizione annullata", fontWeight = FontWeight.SemiBold)
-                Row {
-                    if (n.processedSamples > 0) {
-                        TextButton(onClick = { scope.launch { NotesRepo.resume(context, n.id) } }) { Text("Riprendi") }
-                    }
-                    TextButton(onClick = { scope.launch { NotesRepo.retranscribe(context, n.id) } }) { Text("Ricomincia") }
+        Status.CANCELLED -> AppCard {
+            Text("Trascrizione annullata", style = MaterialTheme.typography.titleSmall)
+            Row {
+                if (n.processedSamples > 0) {
+                    TextButton(onClick = { scope.launch { NotesRepo.resume(context, n.id) } }) { Text("Riprendi") }
                 }
+                TextButton(onClick = { scope.launch { NotesRepo.retranscribe(context, n.id) } }) { Text("Ricomincia") }
             }
         }
         Status.DONE -> if (n.error != null) {
-            Text(n.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Text(n.error, color = cs.error, style = MaterialTheme.typography.bodySmall)
         }
         else -> Unit
     }
@@ -334,25 +495,28 @@ private fun StatusCard(n: Note, onSettings: () -> Unit) {
 private fun ResponseCard(note: Note, r: ClaudeResponse) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.padding(16.dp)) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
-                Transcript.date(r.createdAt),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                "Claude · ${Transcript.date(r.createdAt)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.height(4.dp))
-            SelectionContainer { Text(r.text, style = MaterialTheme.typography.bodyMedium) }
-            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                IconButton(onClick = { ClaudeShare.copy(context, note.title, r.text) }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copia")
-                }
-                IconButton(onClick = { ClaudeShare.shareText(context, note.title, r.text) }) {
-                    Icon(Icons.Default.Share, contentDescription = "Condividi (Notion, Docs, email…)")
-                }
-                IconButton(onClick = { scope.launch { context.app.db.notes().deleteResponse(r) } }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Elimina")
-                }
+        }
+        Spacer(Modifier.height(10.dp))
+        SelectionContainer { MarkdownText(r.text) }
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+            IconButton(onClick = { ClaudeShare.copy(context, note.title, r.text) }) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "Copia", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { ClaudeShare.shareText(context, note.title, r.text) }) {
+                Icon(Icons.Default.Share, contentDescription = "Condividi (Notion, Docs, email…)", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { scope.launch { context.app.db.notes().deleteResponse(r) } }) {
+                Icon(Icons.Default.Delete, contentDescription = "Elimina", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -407,31 +571,38 @@ private fun rememberPlayer(path: String?): Player? {
 private fun PlayerBar(player: Player) {
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
-    Card {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { player.toggle() }) {
-                Icon(
-                    if (player.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (player.playing) "Pausa" else "Ascolta",
-                )
-            }
-            Slider(
-                value = if (dragging) dragValue else player.position.toFloat() / player.duration,
-                onValueChange = { dragging = true; dragValue = it },
-                onValueChangeFinished = {
-                    dragging = false
-                    val ms = (dragValue * player.duration).toInt()
-                    player.mp.seekTo(ms)
-                    player.position = ms
-                },
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                Transcript.time(player.position.toLong()),
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(end = 8.dp),
+    Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable { player.toggle() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (player.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = if (player.playing) "Pausa" else "Ascolta",
+                tint = MaterialTheme.colorScheme.onPrimary,
             )
         }
+        Spacer(Modifier.width(8.dp))
+        Slider(
+            value = if (dragging) dragValue else player.position.toFloat() / player.duration,
+            onValueChange = { dragging = true; dragValue = it },
+            onValueChangeFinished = {
+                dragging = false
+                val ms = (dragValue * player.duration).toInt()
+                player.mp.seekTo(ms)
+                player.position = ms
+            },
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "${Transcript.time(player.position.toLong())} / ${Transcript.time(player.duration.toLong())}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

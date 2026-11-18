@@ -3,28 +3,38 @@ package it.edoardo.appunti.data
 import android.content.Context
 import java.io.File
 
-/** Prompt pronti da mandare a Claude insieme alla trascrizione. */
+/** Prompt pronti da mandare a Claude insieme alla trascrizione. L'ordine è quello della barra nella nota. */
 enum class PromptKind(val key: String, val label: String, val default: String) {
     SUMMARY(
-        "summary", "Riassumi",
+        "summary", "Riassunto",
         """Sei il mio assistente per gli appunti. Dalla trascrizione qui sotto (o nel file allegato) prepara:
 1. Un riassunto di 5-10 righe.
 2. Le decisioni prese.
 3. Le azioni da fare, con responsabile e scadenza se vengono citati.
 4. Le domande rimaste aperte.
-La trascrizione è automatica e può contenere errori: correggili dal contesto, senza inventare nulla. Quando citi un punto preciso indica il minuto [mm:ss]. Rispondi in italiano."""
+La trascrizione è automatica e può contenere errori: correggili dal contesto, senza inventare nulla. Quando citi un punto preciso indica il minuto [mm:ss]. Rispondi in italiano, con titoli ed elenchi puntati."""
+    ),
+    ACTIONS(
+        "actions", "Azioni",
+        """Dalla trascrizione qui sotto (o nel file allegato) estrai solo le cose da fare, come lista di caselle da spuntare ("- [ ] ..."). Per ognuna indica chi deve farla e la scadenza se vengono citate, e il minuto [mm:ss] in cui se ne parla. Raggruppale per persona. Rispondi in italiano."""
+    ),
+    MINDMAP(
+        "mindmap", "Mappa",
+        """Crea una mappa mentale della trascrizione qui sotto (o nel file allegato): tema centrale, 4-7 rami principali e i sotto-punti più importanti. Disegnala come diagramma e poi riportala anche come elenco puntato annidato."""
     ),
     TRANSLATE(
         "translate", "Traduci",
         """Traduci in inglese la trascrizione qui sotto (o nel file allegato), mantenendo i paragrafi e i minuti [mm:ss]. Correggi gli errori evidenti di trascrizione senza cambiare il senso."""
     ),
-    MINDMAP(
-        "mindmap", "Mappa mentale",
-        """Crea una mappa mentale della trascrizione qui sotto (o nel file allegato): tema centrale, 4-7 rami principali e i sotto-punti più importanti. Disegnala come diagramma e poi riportala anche come elenco puntato annidato."""
+    EMAIL(
+        "email", "Email",
+        """Scrivi una email di follow-up per i partecipanti a questa riunione (trascrizione qui sotto o nel file allegato): ringraziamento breve, punti principali discussi, decisioni, prossimi passi con responsabili e scadenze. Tono professionale ma cordiale, in italiano. Proponi anche l'oggetto."""
     ),
     ASK(
-        "ask", "Chiedi",
-        """Ecco la trascrizione di una registrazione (qui sotto o nel file allegato). Leggila e rispondi solo "Pronto": nei prossimi messaggi ti farò domande. Quando rispondi indica il minuto [mm:ss] da cui prendi l'informazione."""
+        "ask", "Domanda libera",
+        """Ecco la trascrizione di una registrazione (qui sotto o nel file allegato). Rispondi alla mia domanda usando solo quello che c'è nella trascrizione e indica i minuti [mm:ss] da cui prendi le informazioni. Poi potrò farti altre domande nella stessa chat.
+
+Domanda: {domanda}"""
     ),
 }
 

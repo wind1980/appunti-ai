@@ -26,10 +26,15 @@ object ClaudeShare {
     /** Oltre questa lunghezza la trascrizione va in un file .txt allegato. */
     private const val MAX_INLINE_CHARS = 12_000
 
-    fun share(context: Context, note: Note, kind: PromptKind) {
+    /** [question] serve solo per [PromptKind.ASK]: sostituisce {domanda} nel prompt. */
+    fun share(context: Context, note: Note, kind: PromptKind, question: String? = null) {
         val prefs = context.app.prefs
         val transcript = Transcript.readable(note)
-        val prompt = prefs.prompt(kind)
+        var prompt = prefs.prompt(kind)
+        if (question != null) {
+            prompt = if (prompt.contains("{domanda}")) prompt.replace("{domanda}", question.trim())
+            else "$prompt\n\nDomanda: ${question.trim()}"
+        }
         val header = "${note.title} – ${Transcript.date(note.createdAt)}"
         val asFile = prefs.alwaysAsFile || transcript.length > MAX_INLINE_CHARS
 

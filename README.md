@@ -1,6 +1,14 @@
-# Appunti AI – versione 0.2
+# Appunti AI – versione 0.3
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
+
+## Novità della 0.3
+
+- **Nuova grafica** ispirata a HiNoter: blu `#4255FF` con sfumatura viola, schede arrotondate, tema chiaro e scuro.
+- **Home** con il riquadro "Nuova nota" (registra, importa audio, istruzioni per i vocali di WhatsApp).
+- **Registrazione a schermo intero** con timer grande, barre del volume e pulsanti tondi Pausa/Riprendi e Termina.
+- **Nota con due schede**: "Riepilogo AI" (le risposte di Claude formattate, con titoli ed elenchi) e "Trascrizione".
+- **Barra Claude fissa** in basso: Riassunto, Azioni, Mappa, Traduci, Email con un tocco, più il campo "Chiedi a Claude…" per una domanda libera.
 
 ## Novità della 0.2
 
