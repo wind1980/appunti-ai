@@ -24,6 +24,7 @@ import it.edoardo.appunti.ui.AppuntiTheme
 import it.edoardo.appunti.ui.NoteScreen
 import it.edoardo.appunti.ui.NotesListScreen
 import it.edoardo.appunti.ui.SettingsScreen
+import it.edoardo.appunti.ui.ViewerScreen
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -68,6 +69,16 @@ class MainActivity : ComponentActivity() {
                             id = entry.arguments?.getLong("id") ?: 0L,
                             onBack = { nav.popBackStack() },
                             onSettings = { nav.navigate("settings") },
+                            onOpenResponse = { rid -> nav.navigate("view/$rid") },
+                        )
+                    }
+                    composable(
+                        "view/{rid}",
+                        arguments = listOf(navArgument("rid") { type = NavType.LongType }),
+                    ) { entry ->
+                        ViewerScreen(
+                            responseId = entry.arguments?.getLong("rid") ?: 0L,
+                            onBack = { nav.popBackStack() },
                         )
                     }
                     composable("settings") {

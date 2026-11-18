@@ -1,6 +1,15 @@
 package it.edoardo.appunti.ui
 
 import android.content.ClipboardManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import it.edoardo.appunti.share.ResponseCleaner
 import android.content.Context
 import android.media.MediaPlayer
 import android.widget.Toast
@@ -94,11 +103,13 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /** Azioni della barra Claude, nell'ordine in cui compaiono. */
-private val BAR_ACTIONS = listOf(PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.MINDMAP, PromptKind.TRANSLATE, PromptKind.EMAIL)
+private val BAR_ACTIONS = listOf(
+    PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC, PromptKind.TRANSLATE, PromptKind.EMAIL,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
+fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenResponse: (Long) -> Unit) {
     val context = LocalContext.current
     val dao = context.app.db.notes()
     val scope = rememberCoroutineScope()
@@ -138,13 +149,16 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
         }
     }
     val recentlySent = prefs.recentSentNoteId() == n.id
+    // Dopo un invio recente, le richieste vanno di default nella chat di Claude già aperta.
+    var sameChat by rememberSaveable(recentlySent) { mutableStateOf(recentlySent) }
 
     fun send(kind: PromptKind, question: String? = null) {
         if (!hasText) {
             Toast.makeText(context, "La trascrizione non è ancora pronta", Toast.LENGTH_SHORT).show()
             return
         }
-        ClaudeShare.share(context, n, kind, question)
+        if (recentlySent && sameChat) ClaudeShare.followUp(context, n, kind, question)
+        else ClaudeShare.share(context, n, kind, question)
         tab = 0 // al ritorno si è già sulla scheda dove incollare la risposta
     }
 
@@ -201,10 +215,10 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                 enabled = hasText,
                 player = player,
                 recentlySent = recentlySent,
+                sameChat = sameChat,
+                onSameChat = { sameChat = it },
                 onAction = { send(it) },
-                onAsk = { q, sameChat ->
-                    if (sameChat) ClaudeShare.continueInChat(context, n, q) else send(PromptKind.ASK, q)
-                },
+                onAsk = { q -> send(PromptKind.ASK, q) },
             )
         },
     ) { padding ->
@@ -228,7 +242,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
             clip?.let { text ->
                 item {
                     ClipboardProposal(
-                        text = text,
+                        raw = text,
                         kind = PromptKind.fromKey(prefs.lastSentKind),
                         onSave = {
                             scope.launch { NotesRepo.saveResponse(context, n.id, text, prefs.lastSentKind) }
@@ -269,7 +283,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit) {
                     }
                 }
                 if (responses.isEmpty()) item { EmptySummary(hasText) { send(PromptKind.SUMMARY) } }
-                items(responses, key = { "r${it.id}" }) { r -> ResponseCard(n, r) }
+                items(responses, key = { "r${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
             } else {
                 if (!hasText) item {
                     Text(
@@ -343,7 +357,9 @@ private fun readClipboard(context: Context): String? =
     }
 
 @Composable
-private fun ClipboardProposal(text: String, kind: PromptKind?, onSave: () -> Unit, onIgnore: () -> Unit) {
+private fun ClipboardProposal(raw: String, kind: PromptKind?, onSave: () -> Unit, onIgnore: () -> Unit) {
+    val cleaned = remember(raw) { ResponseCleaner.clean(raw) }
+    val text = if (cleaned.isHtml) "Infografica (pagina HTML)" else cleaned.text
     AppCard(color = MaterialTheme.colorScheme.primaryContainer) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.ContentPaste, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -357,7 +373,11 @@ private fun ClipboardProposal(text: String, kind: PromptKind?, onSave: () -> Uni
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             GradientButton(
-                if (kind != null && kind != PromptKind.ASK) "Salva come ${kind.label}" else "Salva nella nota",
+                when {
+                    cleaned.isHtml -> "Salva infografica"
+                    kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
+                    else -> "Salva nella nota"
+                },
                 Icons.Default.ContentPaste, onSave,
             )
             Spacer(Modifier.width(8.dp))
@@ -382,13 +402,13 @@ private fun ClaudeBar(
     enabled: Boolean,
     player: Player?,
     recentlySent: Boolean,
+    sameChat: Boolean,
+    onSameChat: (Boolean) -> Unit,
     onAction: (PromptKind) -> Unit,
-    onAsk: (question: String, sameChat: Boolean) -> Unit,
+    onAsk: (question: String) -> Unit,
 ) {
     val context = LocalContext.current
     var question by rememberSaveable { mutableStateOf("") }
-    // Dopo un invio recente, le domande vanno di default nella chat già aperta.
-    var sameChat by rememberSaveable(recentlySent) { mutableStateOf(recentlySent) }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         shadowElevation = 12.dp,
@@ -401,6 +421,18 @@ private fun ClaudeBar(
                 .padding(top = 8.dp, bottom = 10.dp),
         ) {
             if (player != null) PlayerBar(player)
+            if (recentlySent) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Invia in:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(8.dp))
+                    ModePill("Chat già aperta", sameChat) { onSameChat(true) }
+                    Spacer(Modifier.width(6.dp))
+                    ModePill("Nuova chat", !sameChat) { onSameChat(false) }
+                }
+            }
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -410,18 +442,6 @@ private fun ClaudeBar(
             ) {
                 BAR_ACTIONS.forEach { kind ->
                     ActionTile(kind.icon(), kind.label, enabled) { onAction(kind) }
-                }
-            }
-            if (recentlySent) {
-                Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Domanda:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(8.dp))
-                    ModePill("Chat già aperta", sameChat) { sameChat = true }
-                    Spacer(Modifier.width(6.dp))
-                    ModePill("Nuova chat", !sameChat) { sameChat = false }
                 }
             }
             Row(
@@ -437,7 +457,7 @@ private fun ClaudeBar(
                     maxLines = 3,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
-                        if (question.isNotBlank()) { onAsk(question, recentlySent && sameChat); question = "" }
+                        if (question.isNotBlank()) { onAsk(question); question = "" }
                     }),
                     colors = OutlinedTextFieldDefaults.colors(
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -455,7 +475,7 @@ private fun ClaudeBar(
                             if (question.isBlank()) {
                                 Toast.makeText(context, "Scrivi prima la domanda per Claude", Toast.LENGTH_SHORT).show()
                             } else {
-                                onAsk(question, recentlySent && sameChat)
+                                onAsk(question)
                                 question = ""
                             }
                         },
@@ -605,15 +625,16 @@ private fun StatusCard(n: Note, onSettings: () -> Unit) {
 }
 
 @Composable
-private fun ResponseCard(note: Note, r: ClaudeResponse) {
+private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val view = viewKindOf(r)
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(
-                "Claude · ${Transcript.date(r.createdAt)}",
+                (if (view == ViewKind.IMAGE) "Immagine · " else "Claude · ") + Transcript.date(r.createdAt),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -621,19 +642,69 @@ private fun ResponseCard(note: Note, r: ClaudeResponse) {
             PromptKind.fromKey(r.kind)?.let { StatusChip(it.label, MaterialTheme.colorScheme.primary) }
         }
         Spacer(Modifier.height(10.dp))
-        SelectionContainer { MarkdownText(r.text) }
+        when (view) {
+            ViewKind.IMAGE -> {
+                val bmp = remember(r.text) { decodeThumb(r.text) }
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Immagine salvata",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onOpen),
+                    )
+                } else {
+                    Text("Immagine non trovata", color = MaterialTheme.colorScheme.error)
+                }
+            }
+            ViewKind.HTML -> {
+                Text(
+                    "Infografica pronta: aprila a schermo intero, ingrandiscila o salvala come immagine.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                GradientButton("Apri infografica", Icons.Default.Dashboard, onOpen)
+            }
+            ViewKind.MAP -> {
+                GradientButton("Apri mappa concettuale", Icons.Default.AccountTree, onOpen)
+                Spacer(Modifier.height(12.dp))
+                SelectionContainer { MarkdownText(r.text) }
+            }
+            null -> SelectionContainer { MarkdownText(r.text) }
+        }
         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-            IconButton(onClick = { ClaudeShare.copy(context, note.title, r.text) }) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "Copia", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (view == ViewKind.IMAGE) {
+                IconButton(onClick = { ClaudeShare.shareFile(context, File(r.text), "image/*", note.title) }) {
+                    Icon(Icons.Default.Share, contentDescription = "Condividi immagine", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                IconButton(onClick = { ClaudeShare.copy(context, note.title, r.text) }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "Copia", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { ClaudeShare.shareText(context, note.title, r.text) }) {
+                    Icon(Icons.Default.Share, contentDescription = "Condividi (Notion, Docs, email…)", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            IconButton(onClick = { ClaudeShare.shareText(context, note.title, r.text) }) {
-                Icon(Icons.Default.Share, contentDescription = "Condividi (Notion, Docs, email…)", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = { scope.launch { context.app.db.notes().deleteResponse(r) } }) {
+            IconButton(onClick = { scope.launch { NotesRepo.deleteResponse(context, r) } }) {
                 Icon(Icons.Default.Delete, contentDescription = "Elimina", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
+}
+
+/** Anteprima ridotta di un'immagine salvata (circa 1080 px di larghezza). */
+private fun decodeThumb(path: String): Bitmap? = try {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= 1080) sample *= 2
+    BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+} catch (e: Throwable) {
+    null
 }
 
 /** Lettore audio minimo per riascoltare la registrazione e saltare ai paragrafi. */

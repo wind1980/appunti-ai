@@ -26,15 +26,33 @@ object ClaudeShare {
     /** Oltre questa lunghezza la trascrizione va in un file .txt allegato. */
     private const val MAX_INLINE_CHARS = 12_000
 
-    /** [question] serve solo per [PromptKind.ASK]: sostituisce {domanda} nel prompt. */
-    fun share(context: Context, note: Note, kind: PromptKind, question: String? = null) {
-        val prefs = context.app.prefs
-        val transcript = Transcript.readable(note)
-        var prompt = prefs.prompt(kind)
+    /** Aggiunto a tutte le richieste tranne la domanda libera: risposte pronte da salvare. */
+    private const val NO_CHATTER =
+        "Rispondi solo con il contenuto richiesto: niente frasi introduttive, niente commenti, " +
+            "proposte o domande alla fine."
+
+    /** Prompt completo per un tipo di richiesta (con la domanda, per [PromptKind.ASK]). */
+    fun fullPrompt(context: Context, kind: PromptKind, question: String? = null): String {
+        var prompt = context.app.prefs.prompt(kind)
         if (question != null) {
             prompt = if (prompt.contains("{domanda}")) prompt.replace("{domanda}", question.trim())
             else "$prompt\n\nDomanda: ${question.trim()}"
         }
+        return if (kind == PromptKind.ASK) prompt else "$prompt\n$NO_CHATTER"
+    }
+
+    private fun remember(context: Context, note: Note, kind: PromptKind) {
+        val prefs = context.app.prefs
+        prefs.lastSentNoteId = note.id
+        prefs.lastSentKind = kind.key
+        prefs.lastSentAt = System.currentTimeMillis()
+    }
+
+    /** Nuova chat in Claude con richiesta + trascrizione. */
+    fun share(context: Context, note: Note, kind: PromptKind, question: String? = null) {
+        val prefs = context.app.prefs
+        val transcript = Transcript.readable(note)
+        val prompt = fullPrompt(context, kind, question)
         val header = "${note.title} – ${Transcript.date(note.createdAt)}"
         val asFile = prefs.alwaysAsFile || transcript.length > MAX_INLINE_CHARS
 
@@ -42,22 +60,26 @@ object ClaudeShare {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, note.title)
             if (asFile) {
-                val file = writeTxt(context, note, "$header\n\n$transcript")
+                // Il file contiene solo la trascrizione; la richiesta va nel messaggio.
+                val file = writeTxt(context, note, "TRASCRIZIONE – $header\n\n$transcript")
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_TEXT, "$prompt\n\n(La trascrizione è nel file allegato \"${file.name}\".)")
                 clipData = ClipData.newUri(context.contentResolver, file.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } else {
-                putExtra(Intent.EXTRA_TEXT, "$prompt\n\n---\n$header\n\n$transcript")
+                putExtra(Intent.EXTRA_TEXT, "$prompt\n\n---\nTRASCRIZIONE – $header\n\n$transcript")
             }
+            // Claude si apre nella sua finestra: la chat resta aperta lì e si può riprendere.
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        // Ricorda nota e tipo di richiesta: quando la risposta torna, l'app sa dove metterla.
-        prefs.lastSentNoteId = note.id
-        prefs.lastSentKind = kind.key
-        prefs.lastSentAt = System.currentTimeMillis()
-
+        remember(context, note, kind)
+        if (asFile) {
+            // Se l'app Claude allega il file ma lascia vuoto il messaggio, la richiesta è negli appunti.
+            copy(context, note.title, prompt, toast = false)
+            Toast.makeText(context, "Se il messaggio in Claude è vuoto, incolla: la richiesta è negli appunti", Toast.LENGTH_LONG).show()
+        }
         try {
             context.startActivity(Intent(intent).setPackage(CLAUDE_PACKAGE))
         } catch (e: ActivityNotFoundException) {
@@ -67,9 +89,28 @@ object ClaudeShare {
                     Intent.EXTRA_EXCLUDE_COMPONENTS,
                     arrayOf(ComponentName(context, ReceiveTextActivity::class.java))
                 )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(chooser)
         }
+    }
+
+    /**
+     * Richiesta successiva nella chat di Claude già aperta: copia solo la richiesta (senza
+     * trascrizione) e riporta in primo piano Claude, dove la si incolla.
+     */
+    fun followUp(context: Context, note: Note, kind: PromptKind, question: String? = null) {
+        var text = fullPrompt(context, kind, question)
+        if (kind != PromptKind.ASK) text += "\n(Usa la trascrizione che ti ho già mandato in questa chat.)"
+        copy(context, note.title, text, toast = false)
+        remember(context, note, kind)
+        val launch = context.packageManager.getLaunchIntentForPackage(CLAUDE_PACKAGE)
+        if (launch == null) {
+            Toast.makeText(context, "App Claude non trovata: la richiesta è negli appunti", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(context, "Richiesta copiata: in Claude tieni premuto nel campo e incolla", Toast.LENGTH_LONG).show()
+        context.startActivity(launch)
     }
 
     fun copy(context: Context, label: String, text: String, toast: Boolean = true) {
@@ -77,25 +118,6 @@ object ClaudeShare {
         context.app.prefs.handledClipHash = text.trim().hashCode()
         context.getSystemService<ClipboardManager>()!!.setPrimaryClip(ClipData.newPlainText(label, text))
         if (toast) Toast.makeText(context, "Copiato", Toast.LENGTH_SHORT).show()
-    }
-
-    /**
-     * Domanda successiva nella chat di Claude già aperta: copia solo la domanda e riapre Claude,
-     * senza mandare di nuovo tutta la trascrizione in una chat nuova.
-     */
-    fun continueInChat(context: Context, note: Note, question: String) {
-        copy(context, note.title, question.trim(), toast = false)
-        val prefs = context.app.prefs
-        prefs.lastSentNoteId = note.id
-        prefs.lastSentKind = PromptKind.ASK.key
-        prefs.lastSentAt = System.currentTimeMillis()
-        val launch = context.packageManager.getLaunchIntentForPackage(CLAUDE_PACKAGE)
-        if (launch == null) {
-            Toast.makeText(context, "App Claude non trovata: la domanda è negli appunti", Toast.LENGTH_LONG).show()
-            return
-        }
-        Toast.makeText(context, "Domanda copiata: in Claude tieni premuto e incolla", Toast.LENGTH_LONG).show()
-        context.startActivity(launch)
     }
 
     /** Condivide un testo qualsiasi (es. una risposta salvata) con le altre app: Notion, Docs, email. */
@@ -113,8 +135,28 @@ object ClaudeShare {
         })
     }
 
+    /** Condivide un file (immagine PNG, pagina HTML) con le altre app. */
+    fun shareFile(context: Context, file: File, mime: String, subject: String) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            clipData = ClipData.newUri(context.contentResolver, file.name, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Condividi").apply {
+            putExtra(
+                Intent.EXTRA_EXCLUDE_COMPONENTS,
+                arrayOf(ComponentName(context, ReceiveTextActivity::class.java))
+            )
+        })
+    }
+
+    fun shareDir(context: Context): File = File(context.cacheDir, "share").apply { mkdirs() }
+
     private fun writeTxt(context: Context, note: Note, text: String): File {
-        val dir = File(context.cacheDir, "share").apply { mkdirs() }
+        val dir = shareDir(context)
         dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > 86_400_000L) it.delete() }
         val safe = note.title.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(50).ifBlank { "trascrizione" }
         return File(dir, "$safe.txt").apply { writeText(text) }

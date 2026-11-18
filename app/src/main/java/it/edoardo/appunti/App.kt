@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.webkit.WebView
 import it.edoardo.appunti.data.AppDatabase
 import it.edoardo.appunti.data.Prefs
 
@@ -14,6 +15,8 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Per salvare come immagine l'intera mappa o infografica, non solo la parte visibile.
+        WebView.enableSlowWholeDocumentDraw()
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_RECORDING, "Registrazione", NotificationManager.IMPORTANCE_LOW)

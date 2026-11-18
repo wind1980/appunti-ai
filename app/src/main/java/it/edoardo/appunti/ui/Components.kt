@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.Translate
@@ -163,6 +164,7 @@ fun PromptKind.icon(): ImageVector = when (this) {
     PromptKind.SUMMARY -> Icons.Default.AutoAwesome
     PromptKind.ACTIONS -> Icons.Default.Checklist
     PromptKind.MINDMAP -> Icons.Default.AccountTree
+    PromptKind.INFOGRAPHIC -> Icons.Default.Dashboard
     PromptKind.TRANSLATE -> Icons.Default.Translate
     PromptKind.EMAIL -> Icons.Default.Email
     PromptKind.ASK -> Icons.Default.QuestionAnswer

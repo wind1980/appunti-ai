@@ -1,6 +1,8 @@
 package it.edoardo.appunti
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -51,12 +53,19 @@ class ReceiveTextActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val text = intent?.takeIf { it.action == Intent.ACTION_SEND }
-            ?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim()
-        if (text.isNullOrEmpty()) {
-            Toast.makeText(this, "Nessun testo da salvare", Toast.LENGTH_SHORT).show()
+        val send = intent?.takeIf { it.action == Intent.ACTION_SEND }
+        val image: Uri? = send?.takeIf { it.type?.startsWith("image/") == true }?.let { streamUri(it) }
+        val text = send?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim() ?: ""
+        if (image == null && text.isEmpty()) {
+            Toast.makeText(this, "Niente da salvare", Toast.LENGTH_SHORT).show()
             finish()
             return
+        }
+
+        /** Salva il contenuto ricevuto (immagine o testo) nella nota indicata. */
+        suspend fun saveTo(noteId: Long, kind: String?) {
+            if (image != null) NotesRepo.saveImage(applicationContext, noteId, image)
+            else NotesRepo.saveResponse(applicationContext, noteId, text, kind)
         }
 
         setContent {
@@ -91,7 +100,7 @@ class ReceiveTextActivity : ComponentActivity() {
                     ) {
                         item {
                             Text(
-                                text,
+                                if (image != null) "Immagine da salvare in una nota" else text,
                                 maxLines = 4,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
@@ -108,11 +117,15 @@ class ReceiveTextActivity : ComponentActivity() {
                                         color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     Spacer(Modifier.height(12.dp))
                                     GradientButton(
-                                        text = if (kind != null && kind != PromptKind.ASK) "Salva come ${kind.label}" else "Salva qui",
+                                        text = when {
+                                            image != null -> "Salva immagine qui"
+                                            kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
+                                            else -> "Salva qui"
+                                        },
                                         icon = Icons.Default.Check,
                                         onClick = {
                                             scope.launch {
-                                                NotesRepo.saveResponse(applicationContext, target.id, text, prefs.lastSentKind)
+                                                saveTo(target.id, prefs.lastSentKind)
                                                 done("Salvato in \"${target.title}\"")
                                             }
                                         },
@@ -127,7 +140,8 @@ class ReceiveTextActivity : ComponentActivity() {
                         item {
                             AppCard(onClick = {
                                 scope.launch {
-                                    NotesRepo.addTextNote(applicationContext, text)
+                                    if (image != null) NotesRepo.addImageNote(applicationContext, image)
+                                    else NotesRepo.addTextNote(applicationContext, text)
                                     done("Salvato in una nuova nota")
                                 }
                             }) {
@@ -137,7 +151,7 @@ class ReceiveTextActivity : ComponentActivity() {
                         items(notes.filter { it.id != recent?.id }, key = { it.id }) { note ->
                             AppCard(onClick = {
                                 scope.launch {
-                                    NotesRepo.saveResponse(applicationContext, note.id, text)
+                                    saveTo(note.id, null)
                                     done("Salvato in \"${note.title}\"")
                                 }
                             }) {
@@ -151,4 +165,9 @@ class ReceiveTextActivity : ComponentActivity() {
             }
         }
     }
+
+    @Suppress("DEPRECATION")
+    private fun streamUri(i: Intent): Uri? =
+        if (Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        else i.getParcelableExtra(Intent.EXTRA_STREAM)
 }

@@ -1,6 +1,16 @@
-# MeNoter – versione 0.4
+# MeNoter – versione 0.5
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
+
+## Novità della 0.5
+
+- **Il file .txt contiene solo la trascrizione**; la richiesta va nel messaggio e, per sicurezza, anche negli appunti.
+- **Claude si apre nella sua finestra**: la chat resta aperta e si riprende. Dopo il primo invio, "Invia in: Chat già aperta" vale per tutti i pulsanti (copia solo la richiesta, senza rimandare la trascrizione).
+- **Risposte ripulite**: MeNoter toglie le frasi di apertura e chiusura di Claude; i prompt chiedono di rispondere solo con il contenuto.
+- **Mappa concettuale disegnata**: Claude risponde con un elenco a livelli e MeNoter lo disegna come schema ad albero colorato.
+- **Infografica**: nuovo pulsante; Claude crea una pagina HTML che MeNoter mostra a schermo intero.
+- **Salva come immagine** mappe e infografiche (condividi o salva in Immagini › MeNoter).
+- **Immagini**: "Salva in MeNoter" accetta anche immagini e screenshot.
 
 ## Novità della 0.4
 

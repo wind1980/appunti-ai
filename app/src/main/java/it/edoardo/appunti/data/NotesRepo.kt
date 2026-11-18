@@ -11,6 +11,7 @@ import androidx.work.workDataOf
 import it.edoardo.appunti.app
 import it.edoardo.appunti.audio.SAMPLE_RATE
 import it.edoardo.appunti.audio.Wav
+import it.edoardo.appunti.share.ResponseCleaner
 import it.edoardo.appunti.whisper.WhisperNative
 import it.edoardo.appunti.work.TranscriptionWorker
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +20,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** Tipo di risposta per le immagini salvate (il testo è il percorso del file). */
+const val KIND_IMAGE = "image"
 
 object NotesRepo {
 
@@ -136,7 +140,9 @@ object NotesRepo {
     suspend fun delete(context: Context, note: Note) {
         WorkManager.getInstance(context).cancelUniqueWork(workName(note.id))
         if (note.status == Status.RUNNING) WhisperNative.cancel()
+        val images = context.app.db.notes().imagePaths(note.id)
         withContext(Dispatchers.IO) {
+            images.forEach { File(it).delete() }
             note.audioPath?.let { File(it).delete() }
             File(context.cacheDir, "pcm/${note.id}.pcm").delete()
         }
@@ -148,18 +154,52 @@ object NotesRepo {
      * automatico ("Registrazione …" o il nome di un file), usa il titolo proposto da Claude.
      */
     suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null) {
-        val clean = text.trim()
+        // Il testo originale (quello negli appunti) è "gestito": non va riproposto.
+        context.app.prefs.handledClipHash = text.trim().hashCode()
+        val cleaned = ResponseCleaner.clean(text)
+        val clean = cleaned.text
+        val finalKind = if (cleaned.isHtml) PromptKind.INFOGRAPHIC.key else kind
         val dao = context.app.db.notes()
         dao.insertResponse(
-            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = kind)
+            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = finalKind)
         )
-        context.app.prefs.handledClipHash = clean.hashCode()
         if (kind == PromptKind.SUMMARY.key) {
             val note = dao.get(noteId) ?: return
             val heading = clean.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
                 ?.takeIf { it.startsWith("#") }?.trimStart('#', ' ')?.trim()?.trim('*')
             if (heading != null && heading.length in 3..60 && isAutoTitle(note.title)) dao.rename(noteId, heading)
         }
+    }
+
+    /** Immagine condivisa (es. screenshot di un grafico di Claude) salvata nella nota. */
+    suspend fun saveImage(context: Context, noteId: Long, uri: Uri) = withContext(Dispatchers.IO) {
+        val type = context.contentResolver.getType(uri) ?: "image/png"
+        val ext = when {
+            type.contains("png") -> "png"
+            type.contains("webp") -> "webp"
+            else -> "jpg"
+        }
+        val dir = File(context.filesDir, "images").apply { mkdirs() }
+        val dest = File(dir, "img-${System.currentTimeMillis()}.$ext")
+        context.contentResolver.openInputStream(uri)!!.use { input -> dest.outputStream().use { input.copyTo(it) } }
+        context.app.db.notes().insertResponse(
+            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = dest.absolutePath, kind = KIND_IMAGE)
+        )
+    }
+
+    /** Nuova nota che contiene solo un'immagine condivisa. */
+    suspend fun addImageNote(context: Context, uri: Uri): Long {
+        val title = "Immagine " + SimpleDateFormat("d MMM HH:mm", Locale.ITALIAN).format(Date())
+        val id = context.app.db.notes().insert(
+            Note(title = title, createdAt = System.currentTimeMillis(), audioPath = null, status = Status.TEXT)
+        )
+        saveImage(context, id, uri)
+        return id
+    }
+
+    suspend fun deleteResponse(context: Context, r: ClaudeResponse) {
+        if (r.kind == KIND_IMAGE) withContext(Dispatchers.IO) { File(r.text).delete() }
+        context.app.db.notes().deleteResponse(r)
     }
 
     /** Titoli messi dall'app o nomi di file, che conviene sostituire con un titolo vero. */

@@ -132,6 +132,12 @@ interface NoteDao {
     @Insert
     suspend fun insertResponse(response: ClaudeResponse): Long
 
+    @Query("SELECT text FROM responses WHERE noteId = :noteId AND kind = 'image'")
+    suspend fun imagePaths(noteId: Long): List<String>
+
+    @Query("SELECT * FROM responses WHERE id = :id")
+    suspend fun getResponse(id: Long): ClaudeResponse?
+
     @Delete
     suspend fun deleteResponse(response: ClaudeResponse)
 }

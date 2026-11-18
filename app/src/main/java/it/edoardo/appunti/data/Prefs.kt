@@ -21,7 +21,19 @@ Comincia la risposta con una riga "# " seguita da un titolo breve per questa not
     ),
     MINDMAP(
         "mindmap", "Mappa",
-        """Crea una mappa mentale della trascrizione qui sotto (o nel file allegato): tema centrale, 4-7 rami principali e i sotto-punti più importanti. Disegnala come diagramma e poi riportala anche come elenco puntato annidato."""
+        """Crea una mappa concettuale della trascrizione qui sotto (o nel file allegato).
+Scrivila SOLO come elenco puntato annidato in Markdown, così:
+# Tema centrale
+- Ramo principale
+  - Sotto-punto
+    - Dettaglio
+Usa da 4 a 7 rami principali, al massimo 3 livelli, e testi brevi (al massimo 6 parole per punto). Niente diagrammi, niente codice: solo l'elenco."""
+    ),
+    INFOGRAPHIC(
+        "infographic", "Infografica",
+        """Crea un'infografica che riassuma la trascrizione qui sotto (o nel file allegato): titolo, numeri o fatti chiave, decisioni, prossimi passi.
+Falla come UNA sola pagina HTML completa e autonoma: CSS dentro <style>, nessuna risorsa esterna (niente font, immagini, librerie o script da internet), icone con emoji o SVG inline. Pensala per lo schermo di uno smartphone (larghezza massima 480px), colori vivaci e testo leggibile.
+Rispondi solo con il codice HTML completo, in un unico blocco di codice."""
     ),
     TRANSLATE(
         "translate", "Traduci",
