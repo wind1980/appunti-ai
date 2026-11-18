@@ -94,24 +94,6 @@ object ClaudeShare {
         }
     }
 
-    /**
-     * Richiesta successiva nella chat di Claude già aperta: copia solo la richiesta (senza
-     * trascrizione) e riporta in primo piano Claude, dove la si incolla.
-     */
-    fun followUp(context: Context, note: Note, kind: PromptKind, question: String? = null) {
-        var text = fullPrompt(context, kind, question)
-        if (kind != PromptKind.ASK) text += "\n(Usa la trascrizione che ti ho già mandato in questa chat.)"
-        copy(context, note.title, text, toast = false)
-        remember(context, note, kind)
-        val launch = context.packageManager.getLaunchIntentForPackage(CLAUDE_PACKAGE)
-        if (launch == null) {
-            Toast.makeText(context, "App Claude non trovata: la richiesta è negli appunti", Toast.LENGTH_LONG).show()
-            return
-        }
-        Toast.makeText(context, "Richiesta copiata: in Claude tieni premuto nel campo e incolla", Toast.LENGTH_LONG).show()
-        context.startActivity(launch)
-    }
-
     fun copy(context: Context, label: String, text: String, toast: Boolean = true) {
         // Il testo copiato dall'app non va riproposto come "risposta di Claude".
         context.app.prefs.handledClipHash = text.trim().hashCode()

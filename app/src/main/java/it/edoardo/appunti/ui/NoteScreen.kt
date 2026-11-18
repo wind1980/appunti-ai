@@ -148,17 +148,15 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
             it.length >= 30 && it.hashCode() != prefs.handledClipHash && responses.none { r -> r.text == it }
         }
     }
-    val recentlySent = prefs.recentSentNoteId() == n.id
-    // Dopo un invio recente, le richieste vanno di default nella chat di Claude già aperta.
-    var sameChat by rememberSaveable(recentlySent) { mutableStateOf(recentlySent) }
 
     fun send(kind: PromptKind, question: String? = null) {
         if (!hasText) {
             Toast.makeText(context, "La trascrizione non è ancora pronta", Toast.LENGTH_SHORT).show()
             return
         }
-        if (recentlySent && sameChat) ClaudeShare.followUp(context, n, kind, question)
-        else ClaudeShare.share(context, n, kind, question)
+        // Sempre una richiesta completa (comando + trascrizione): Claude non torna sulla chat
+        // precedente quando lo si riapre da fuori, quindi ogni invio deve bastare da solo.
+        ClaudeShare.share(context, n, kind, question)
         tab = 0 // al ritorno si è già sulla scheda dove incollare la risposta
     }
 
@@ -214,9 +212,6 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
             ClaudeBar(
                 enabled = hasText,
                 player = player,
-                recentlySent = recentlySent,
-                sameChat = sameChat,
-                onSameChat = { sameChat = it },
                 onAction = { send(it) },
                 onAsk = { q -> send(PromptKind.ASK, q) },
             )
@@ -401,9 +396,6 @@ private fun pasteResponse(context: Context, onText: (String) -> Unit) {
 private fun ClaudeBar(
     enabled: Boolean,
     player: Player?,
-    recentlySent: Boolean,
-    sameChat: Boolean,
-    onSameChat: (Boolean) -> Unit,
     onAction: (PromptKind) -> Unit,
     onAsk: (question: String) -> Unit,
 ) {
@@ -421,18 +413,6 @@ private fun ClaudeBar(
                 .padding(top = 8.dp, bottom = 10.dp),
         ) {
             if (player != null) PlayerBar(player)
-            if (recentlySent) {
-                Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Invia in:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(8.dp))
-                    ModePill("Chat già aperta", sameChat) { onSameChat(true) }
-                    Spacer(Modifier.width(6.dp))
-                    ModePill("Nuova chat", !sameChat) { onSameChat(false) }
-                }
-            }
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -452,7 +432,7 @@ private fun ClaudeBar(
                     value = question,
                     onValueChange = { question = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text(if (recentlySent && sameChat) "Altra domanda a Claude…" else "Chiedi a Claude su questa nota…") },
+                    placeholder = { Text("Chiedi a Claude su questa nota…") },
                     shape = RoundedCornerShape(28.dp),
                     maxLines = 3,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -486,20 +466,6 @@ private fun ClaudeBar(
             }
         }
     }
-}
-
-@Composable
-private fun ModePill(label: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelMedium,
-        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    )
 }
 
 @Composable
