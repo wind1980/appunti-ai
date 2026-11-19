@@ -55,3 +55,18 @@ jobs:
           body: Compilata dal commit ${{ github.sha }}
           files: AppuntiAI.apk
           make_latest: true
+
+      # Branch di prova: release "anteprima" con un link fisso tutto suo, che NON diventa
+      # l'ultima release (il link solito resta sulla versione di main).
+      # Link: .../releases/download/anteprima-NOMEBRANCH/AppuntiAI.apk
+      - name: Pubblica anteprima
+        if: github.ref != 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: anteprima-${{ github.ref_name }}
+          name: Anteprima ${{ github.ref_name }}
+          body: Versione di prova compilata dal commit ${{ github.sha }} (branch ${{ github.ref_name }}).
+          files: AppuntiAI.apk
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
