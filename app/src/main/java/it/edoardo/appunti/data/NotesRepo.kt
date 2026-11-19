@@ -181,6 +181,8 @@ object NotesRepo {
         dao.insertResponse(
             ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = finalKind)
         )
+        // Le cose da fare diventano attività spuntabili, con responsabile e scadenza.
+        if (finalKind == PromptKind.ACTIONS.key) Tasks.importFrom(context, noteId, clean)
         if (kind == PromptKind.SUMMARY.key) {
             val note = dao.get(noteId) ?: return true
             val heading = clean.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
@@ -233,6 +235,15 @@ object NotesRepo {
     /** Titoli messi dall'app o nomi di file, che conviene sostituire con un titolo vero. */
     private fun isAutoTitle(title: String): Boolean =
         title.startsWith("Registrazione") || title == "Audio importato" || !title.trim().contains(' ')
+
+    /** Nota vuota senza audio che raccoglie la risposta a una domanda su più note. */
+    suspend fun addQuestionNote(context: Context, question: String, count: Int): Long =
+        context.app.db.notes().insert(
+            Note(
+                title = "Domanda su $count note: " + question.trim().replace('\n', ' ').take(40),
+                createdAt = System.currentTimeMillis(), audioPath = null, status = Status.TEXT,
+            )
+        )
 
     /** Nota senza audio, creata da un testo condiviso (es. una risposta di Claude). */
     suspend fun addTextNote(context: Context, text: String): Long {

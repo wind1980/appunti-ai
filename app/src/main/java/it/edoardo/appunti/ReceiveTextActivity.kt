@@ -119,7 +119,8 @@ class ReceiveTextActivity : ComponentActivity() {
                                     GradientButton(
                                         text = when {
                                             image != null -> "Salva qui"
-                                            kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
+                                            kind != null && kind != PromptKind.ASK && kind != PromptKind.MULTI -> "Salva come ${kind.label}"
+                                            prefs.template(prefs.lastSentKind) != null -> "Salva come ${prefs.template(prefs.lastSentKind)?.name}"
                                             else -> "Salva qui"
                                         },
                                         icon = Icons.Default.Check,

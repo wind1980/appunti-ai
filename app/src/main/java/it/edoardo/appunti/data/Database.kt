@@ -12,6 +12,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Update
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
@@ -64,6 +65,29 @@ data class ClaudeResponse(
     val text: String,
     /** Tipo di richiesta che ha prodotto la risposta (chiave di PromptKind), se nota. */
     val kind: String? = null,
+)
+
+/** Attività da fare estratta da una nota (dalla risposta "Azioni" di Claude o aggiunta a mano). */
+@Entity(
+    tableName = "tasks",
+    foreignKeys = [ForeignKey(
+        entity = Note::class,
+        parentColumns = ["id"],
+        childColumns = ["noteId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("noteId")],
+)
+data class TaskItem(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val noteId: Long,
+    val text: String,
+    /** Chi deve farla, se indicato. */
+    val owner: String? = null,
+    /** Scadenza (millisecondi, ore 9:00 del giorno), se indicata. */
+    val dueAt: Long? = null,
+    val done: Boolean = false,
+    val createdAt: Long,
 )
 
 @Dao
@@ -143,9 +167,42 @@ interface NoteDao {
 
     @Delete
     suspend fun deleteResponse(response: ClaudeResponse)
+
+    /** Ultima risposta di un certo tipo (es. il riassunto più recente), per le domande su più note. */
+    @Query("SELECT text FROM responses WHERE noteId = :noteId AND kind = :kind ORDER BY createdAt DESC LIMIT 1")
+    suspend fun latestResponse(noteId: Long, kind: String): String?
+
+    @Query("SELECT * FROM responses WHERE noteId = :noteId ORDER BY createdAt ASC")
+    suspend fun responsesOf(noteId: Long): List<ClaudeResponse>
+
+    // --- Attività ---
+
+    @Query("SELECT * FROM tasks WHERE noteId = :noteId ORDER BY done ASC, CASE WHEN dueAt IS NULL THEN 1 ELSE 0 END, dueAt ASC, id ASC")
+    fun observeTasks(noteId: Long): Flow<List<TaskItem>>
+
+    @Query("SELECT * FROM tasks ORDER BY done ASC, CASE WHEN dueAt IS NULL THEN 1 ELSE 0 END, dueAt ASC, id DESC")
+    fun observeAllTasks(): Flow<List<TaskItem>>
+
+    @Query("SELECT * FROM tasks WHERE noteId = :noteId ORDER BY done ASC, id ASC")
+    suspend fun tasksOf(noteId: Long): List<TaskItem>
+
+    @Query("SELECT text FROM tasks WHERE noteId = :noteId")
+    suspend fun taskTexts(noteId: Long): List<String>
+
+    @Insert
+    suspend fun insertTask(task: TaskItem): Long
+
+    @Update
+    suspend fun updateTask(task: TaskItem)
+
+    @Query("UPDATE tasks SET done = :done WHERE id = :id")
+    suspend fun setTaskDone(id: Long, done: Boolean)
+
+    @Delete
+    suspend fun deleteTask(task: TaskItem)
 }
 
-@Database(entities = [Note::class, ClaudeResponse::class], version = 3, exportSchema = false)
+@Database(entities = [Note::class, ClaudeResponse::class, TaskItem::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
 
@@ -165,9 +222,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 0.7 → 0.8: elenco delle attività. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `tasks` (
+                       `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                       `noteId` INTEGER NOT NULL,
+                       `text` TEXT NOT NULL,
+                       `owner` TEXT,
+                       `dueAt` INTEGER,
+                       `done` INTEGER NOT NULL,
+                       `createdAt` INTEGER NOT NULL,
+                       FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_tasks_noteId` ON `tasks` (`noteId`)")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "appunti.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }
