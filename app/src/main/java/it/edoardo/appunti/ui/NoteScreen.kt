@@ -2,6 +2,7 @@ package it.edoardo.appunti.ui
 
 import android.content.ClipboardManager
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -61,6 +62,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -95,6 +97,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.edoardo.appunti.app
 import it.edoardo.appunti.data.ClaudeResponse
+import it.edoardo.appunti.data.file
 import it.edoardo.appunti.data.Note
 import it.edoardo.appunti.data.NotesRepo
 import it.edoardo.appunti.data.PromptKind
@@ -113,7 +116,13 @@ private val BAR_ACTIONS = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenResponse: (Long) -> Unit) {
+fun NoteScreen(
+    id: Long,
+    onBack: () -> Unit,
+    onSettings: () -> Unit,
+    onOpenResponse: (Long) -> Unit,
+    onOpenMap: (Long) -> Unit,
+) {
     val context = LocalContext.current
     val dao = context.app.db.notes()
     val scope = rememberCoroutineScope()
@@ -127,12 +136,11 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
     val paragraphs = remember(n.segments) { Transcript.paragraphs(Transcript.parse(n.segments)) }
     val hasText = paragraphs.isNotEmpty()
 
-    // 0 = Riepilogo AI, 1 = Trascrizione. Si apre sulla trascrizione finché non ci sono risposte.
     // 0 = Riepilogo AI, 1 = Grafica, 2 = Trascrizione. Si apre sulla trascrizione finché non ci sono risposte.
     var tab by rememberSaveable { mutableIntStateOf(-1) }
     val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) 2 else 0
-    val textResponses = responses.filter { viewKindOf(it) == null }
-    val visualResponses = responses.filter { viewKindOf(it) != null }
+    val textResponses = responses.filter { !isVisual(it) }
+    val visualResponses = responses.filter { isVisual(it) }
     val addFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -156,10 +164,17 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
         onPauseOrDispose { }
     }
     var clip by remember { mutableStateOf<String?>(null) }
+    var clipImage by remember { mutableStateOf<Uri?>(null) }
     LaunchedEffect(resumeTick, responses.size) {
         clip = null
+        clipImage = null
         if (prefs.recentSentNoteId() != n.id) return@LaunchedEffect
         delay(600) // Android lascia leggere gli appunti solo quando la finestra ha il focus
+        val uri = readClipboardFile(context)
+        if (uri != null) {
+            if (uri.toString().hashCode() != prefs.handledClipHash) clipImage = uri
+            return@LaunchedEffect
+        }
         val text = readClipboard(context)?.trim()
         clip = text?.takeIf {
             it.length >= 30 && it.hashCode() != prefs.handledClipHash && responses.none { r -> r.text == it }
@@ -183,21 +198,40 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
     /** Salva un testo copiato da Claude con il tipo scelto (null = testo normale). */
     fun saveAs(text: String, kind: PromptKind?) {
         scope.launch {
-            val ok = NotesRepo.saveResponse(context, n.id, text, kind?.key, strict = kind == PromptKind.INFOGRAPHIC)
-            if (!ok) {
-                Toast.makeText(
-                    context,
-                    "Negli appunti non c'è il codice dell'infografica. In Claude apri l'infografica (artefatto) e usa Copia, poi riprova.",
-                    Toast.LENGTH_LONG,
-                ).show()
-            } else {
-                clip = null
-                tab = if (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) 1 else 0
-                Toast.makeText(context, "Salvata" + (kind?.let { " come ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
-                if (kind == PromptKind.MINDMAP && !MindMap.looksLikeMap(text)) {
-                    Toast.makeText(context, "Non sembra una mappa a livelli: la vedrai come testo", Toast.LENGTH_LONG).show()
-                }
+            NotesRepo.saveResponse(context, n.id, text, kind?.key)
+            clip = null
+            tab = if (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) 1 else 0
+            Toast.makeText(context, "Salvata" + (kind?.let { " come ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Salva un'immagine copiata (o un PDF) con il tipo scelto: con Mappa/Infografica si abbina al testo. */
+    fun saveImageAs(uri: Uri, kind: PromptKind?) {
+        scope.launch {
+            try {
+                prefs.handledClipHash = uri.toString().hashCode()
+                NotesRepo.saveFile(context, n.id, uri, kind?.key)
+                clipImage = null
+                tab = 1
+                Toast.makeText(context, "Immagine salvata" + (kind?.let { " nella ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Impossibile leggere l'immagine copiata: condividila con \"Salva in MeNoter\"", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    /** "Incolla come…": prende dagli appunti un'immagine o un testo. */
+    fun pasteAs(kind: PromptKind?) {
+        val uri = readClipboardFile(context)
+        if (uri != null) {
+            saveImageAs(uri, kind)
+            return
+        }
+        val text = readClipboard(context)
+        if (text.isNullOrBlank()) {
+            Toast.makeText(context, "Gli appunti sono vuoti: in Claude copia prima la risposta o l'immagine", Toast.LENGTH_LONG).show()
+        } else {
+            saveAs(text, kind)
         }
     }
 
@@ -275,6 +309,19 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                 )
             }
             item { StatusCard(n, onSettings) }
+            clipImage?.let { uri ->
+                item {
+                    ImageProposal(
+                        uri = uri,
+                        suggested = PromptKind.fromKey(prefs.lastSentKind),
+                        onSave = { kind -> saveImageAs(uri, kind) },
+                        onIgnore = {
+                            prefs.handledClipHash = uri.toString().hashCode()
+                            clipImage = null
+                        },
+                    )
+                }
+            }
             clip?.let { text ->
                 item {
                     ClipboardProposal(
@@ -316,12 +363,7 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                             }
                             PasteKindMenu(expanded = pasteMenu, onDismiss = { pasteMenu = false }) { kind ->
                                 pasteMenu = false
-                                val text = readClipboard(context)
-                                if (text.isNullOrBlank()) {
-                                    Toast.makeText(context, "Gli appunti sono vuoti: in Claude copia prima la risposta", Toast.LENGTH_LONG).show()
-                                } else {
-                                    saveAs(text, kind)
-                                }
+                                pasteAs(kind)
                             }
                         }
                     }
@@ -336,10 +378,30 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { addFile.launch(arrayOf("image/*", "application/pdf")) }) {
-                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Aggiungi immagine o PDF")
+                        var graphicsMenu by remember { mutableStateOf(false) }
+                        Box {
+                            TextButton(onClick = { graphicsMenu = true }) {
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Incolla come…")
+                            }
+                            DropdownMenu(expanded = graphicsMenu, onDismissRequest = { graphicsMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Mappa concettuale (testo o immagine)") },
+                                    leadingIcon = { Icon(PromptKind.MINDMAP.icon(), contentDescription = null) },
+                                    onClick = { graphicsMenu = false; pasteAs(PromptKind.MINDMAP) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Infografica (testo o immagine)") },
+                                    leadingIcon = { Icon(PromptKind.INFOGRAPHIC.icon(), contentDescription = null) },
+                                    onClick = { graphicsMenu = false; pasteAs(PromptKind.INFOGRAPHIC) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Aggiungi immagine o PDF dal telefono…") },
+                                    leadingIcon = { Icon(Icons.Default.AddPhotoAlternate, contentDescription = null) },
+                                    onClick = { graphicsMenu = false; addFile.launch(arrayOf("image/*", "application/pdf")) },
+                                )
+                            }
                         }
                     }
                 }
@@ -350,7 +412,9 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
                         onInfographic = { send(PromptKind.INFOGRAPHIC) },
                     )
                 }
-                items(visualResponses, key = { "v${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
+                items(visualResponses, key = { "v${it.id}" }) { r ->
+                    VisualCard(n, r, onOpen = { onOpenResponse(r.id) }, onOpenMap = { onOpenMap(r.id) })
+                }
             } else {
                 if (!hasText) item {
                     Text(
@@ -413,6 +477,22 @@ fun NoteScreen(id: Long, onBack: () -> Unit, onSettings: () -> Unit, onOpenRespo
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Annulla") } },
         )
     }
+}
+
+/** Immagine o PDF negli appunti (es. un'immagine copiata in Claude), se c'è. */
+private fun readClipboardFile(context: Context): Uri? = try {
+    val cm = context.getSystemService<ClipboardManager>()
+    val clip = cm?.primaryClip
+    val uri = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+    if (uri == null) null else {
+        val desc = clip?.description
+        val type = context.contentResolver.getType(uri) ?: ""
+        val ok = type.startsWith("image/") || type == "application/pdf" ||
+            desc?.hasMimeType("image/*") == true || desc?.hasMimeType("application/pdf") == true
+        if (ok) uri else null
+    }
+} catch (e: Exception) {
+    null
 }
 
 private fun readClipboard(context: Context): String? =
@@ -618,8 +698,9 @@ private fun EmptyGraphics(hasText: Boolean, onMap: () -> Unit, onInfographic: ()
             Text("Mappe e infografiche", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Claude crea un'immagine PNG. In Claude tocca il file creato, poi Condividi → \"Salva in MeNoter\". " +
-                    "Se l'hai scaricato, usa \"Aggiungi immagine o PDF\".",
+                "Claude risponde con un testo e un'immagine PNG. Copia il testo e torna qui: MeNoter te lo propone. " +
+                    "Poi fai lo stesso con l'immagine (tieni premuto → Copia, oppure Condividi → \"Salva in MeNoter\"): " +
+                    "testo e immagine finiscono nella stessa scheda.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -722,6 +803,197 @@ private fun StatusCard(n: Note, onSettings: () -> Unit) {
             Text(n.error, color = cs.error, style = MaterialTheme.typography.bodySmall)
         }
         else -> Unit
+    }
+}
+
+@Composable
+private fun ImageProposal(uri: Uri, suggested: PromptKind?, onSave: (PromptKind?) -> Unit, onIgnore: () -> Unit) {
+    val context = LocalContext.current
+    val bmp = remember(uri) {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply { inSampleSize = 4 })
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+    AppCard(color = MaterialTheme.colorScheme.primaryContainer) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Hai copiato un'immagine", style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        if (bmp != null) {
+            Spacer(Modifier.height(8.dp))
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp).clip(RoundedCornerShape(12.dp)),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        val first = suggested?.takeIf { it == PromptKind.MINDMAP || it == PromptKind.INFOGRAPHIC }
+        if (first != null) {
+            GradientButton("Aggiungi alla ${typeLabel(first)}", first.icon(), { onSave(first) })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (first != PromptKind.MINDMAP) TextButton(onClick = { onSave(PromptKind.MINDMAP) }) { Text("Mappa") }
+            if (first != PromptKind.INFOGRAPHIC) TextButton(onClick = { onSave(PromptKind.INFOGRAPHIC) }) { Text("Infografica") }
+            TextButton(onClick = { onSave(null) }) { Text("Solo immagine") }
+            TextButton(onClick = onIgnore) { Text("Ignora") }
+        }
+    }
+}
+
+/**
+ * Scheda della sezione Grafica: immagine (o PDF) e testo di Claude insieme.
+ * Se manca uno dei due, propone di aggiungerlo.
+ */
+@Composable
+private fun VisualCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit, onOpenMap: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val kind = PromptKind.fromKey(r.kind)
+    val file = r.file()
+    val isPdf = file?.lowercase()?.endsWith(".pdf") == true
+    val html = if (file == null && kind == PromptKind.INFOGRAPHIC) ResponseCleaner.extractHtml(r.text) else null
+    val body = r.text.takeIf { file == null || r.filePath != null }?.takeIf { it.isNotBlank() && html == null }
+    val paired = kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC
+    val title = when {
+        kind == PromptKind.MINDMAP -> "Mappa concettuale"
+        kind == PromptKind.INFOGRAPHIC -> "Infografica"
+        isPdf -> "PDF"
+        else -> "Immagine"
+    }
+    val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                NotesRepo.attachFile(context, r, uri)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Impossibile aggiungere il file: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    var expanded by remember { mutableStateOf(false) }
+
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                kind?.icon() ?: if (isPdf) Icons.Default.Description else Icons.Default.AddPhotoAlternate,
+                contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(Transcript.date(r.createdAt), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        // Immagine o PDF
+        if (file != null) {
+            val bmp = remember(file) { if (isPdf) PdfPages.firstPage(file) else decodeThumb(file) }
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onOpen),
+                )
+            } else {
+                Text("File non leggibile", color = MaterialTheme.colorScheme.error)
+            }
+        } else if (html != null) {
+            GradientButton("Apri infografica", Icons.Default.Dashboard, onOpen)
+        } else if (paired) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .padding(12.dp),
+            ) {
+                Text("Manca l'immagine", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "In Claude tieni premuta l'immagine → Copia, poi tocca Incolla. Oppure Condividi → \"Salva in MeNoter\".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row {
+                    TextButton(onClick = {
+                        val uri = readClipboardFile(context)
+                        if (uri == null) {
+                            Toast.makeText(context, "Negli appunti non c'è un'immagine", Toast.LENGTH_LONG).show()
+                        } else scope.launch {
+                            try {
+                                context.app.prefs.handledClipHash = uri.toString().hashCode()
+                                NotesRepo.attachFile(context, r, uri)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Impossibile leggere l'immagine copiata", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }) { Text("Incolla immagine") }
+                    TextButton(onClick = { attach.launch(arrayOf("image/*", "application/pdf")) }) { Text("Dal telefono…") }
+                }
+            }
+        }
+        if (kind == PromptKind.MINDMAP && MindMap.looksLikeMap(r.text)) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenMap) {
+                Icon(Icons.Default.AccountTree, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Disegna la mappa dall'elenco")
+            }
+        }
+
+        // Testo
+        if (body != null) {
+            Spacer(Modifier.height(12.dp))
+            val long = body.lines().size > 14
+            SelectionContainer {
+                MarkdownText(if (long && !expanded) body.lines().take(14).joinToString("\n") else body)
+            }
+            if (long) TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Mostra meno" else "Mostra tutto") }
+        } else if (paired && file != null) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = {
+                val text = readClipboard(context)
+                if (text.isNullOrBlank()) {
+                    Toast.makeText(context, "Negli appunti non c'è testo: in Claude copia la risposta", Toast.LENGTH_LONG).show()
+                } else scope.launch { NotesRepo.attachText(context, r, text) }
+            }) {
+                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Incolla il testo di Claude")
+            }
+        }
+
+        // Azioni
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+            IconButton(onClick = {
+                if (file != null) ClaudeShare.shareFileWithText(context, File(file), body, "$title – ${note.title}")
+                else ClaudeShare.shareText(context, "$title – ${note.title}", r.text)
+            }) {
+                Icon(Icons.Default.Share, contentDescription = "Condividi", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (body != null) IconButton(onClick = { ClaudeShare.copy(context, note.title, body) }) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "Copia testo", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (file != null && paired) IconButton(onClick = { attach.launch(arrayOf("image/*", "application/pdf")) }) {
+                Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Sostituisci immagine", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { scope.launch { NotesRepo.deleteResponse(context, r) } }) {
+                Icon(Icons.Default.Delete, contentDescription = "Elimina", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

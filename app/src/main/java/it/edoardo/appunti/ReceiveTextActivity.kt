@@ -64,7 +64,7 @@ class ReceiveTextActivity : ComponentActivity() {
 
         /** Salva il contenuto ricevuto (immagine o testo) nella nota indicata. */
         suspend fun saveTo(noteId: Long, kind: String?) {
-            if (image != null) NotesRepo.saveFile(applicationContext, noteId, image)
+            if (image != null) NotesRepo.saveFile(applicationContext, noteId, image, kind)
             else NotesRepo.saveResponse(applicationContext, noteId, text, kind)
         }
 
@@ -118,6 +118,8 @@ class ReceiveTextActivity : ComponentActivity() {
                                     Spacer(Modifier.height(12.dp))
                                     GradientButton(
                                         text = when {
+                                            image != null && (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) ->
+                                                "Aggiungi alla ${if (kind == PromptKind.MINDMAP) "mappa" else "infografica"}"
                                             image != null -> "Salva qui"
                                             kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
                                             else -> "Salva qui"

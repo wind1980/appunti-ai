@@ -64,7 +64,13 @@ data class ClaudeResponse(
     val text: String,
     /** Tipo di richiesta che ha prodotto la risposta (chiave di PromptKind), se nota. */
     val kind: String? = null,
+    /** Immagine o PDF abbinato (es. il PNG della mappa o dell'infografica creato da Claude). */
+    val filePath: String? = null,
 )
+
+/** File (immagine o PDF) della risposta: quello abbinato o, per le vecchie risposte-immagine, il testo stesso. */
+fun ClaudeResponse.file(): String? =
+    filePath ?: text.takeIf { kind == "image" || kind == "pdf" }
 
 @Dao
 interface NoteDao {
@@ -132,8 +138,31 @@ interface NoteDao {
     @Insert
     suspend fun insertResponse(response: ClaudeResponse): Long
 
-    @Query("SELECT text FROM responses WHERE noteId = :noteId AND kind IN ('image', 'pdf')")
+    @Query(
+        """SELECT text FROM responses WHERE noteId = :noteId AND kind IN ('image', 'pdf')
+           UNION ALL SELECT filePath FROM responses WHERE noteId = :noteId AND filePath IS NOT NULL"""
+    )
     suspend fun imagePaths(noteId: Long): List<String>
+
+    /** Ultima scheda di quel tipo ancora senza immagine (per abbinarle il PNG che arriva dopo il testo). */
+    @Query(
+        """SELECT * FROM responses WHERE noteId = :noteId AND kind = :kind AND filePath IS NULL
+           AND createdAt > :since ORDER BY createdAt DESC LIMIT 1"""
+    )
+    suspend fun latestWithoutFile(noteId: Long, kind: String, since: Long): ClaudeResponse?
+
+    /** Ultima scheda di quel tipo con l'immagine ma senza testo (per abbinarle il testo che arriva dopo). */
+    @Query(
+        """SELECT * FROM responses WHERE noteId = :noteId AND kind = :kind AND filePath IS NOT NULL
+           AND text = '' AND createdAt > :since ORDER BY createdAt DESC LIMIT 1"""
+    )
+    suspend fun latestWithoutText(noteId: Long, kind: String, since: Long): ClaudeResponse?
+
+    @Query("UPDATE responses SET filePath = :path WHERE id = :id")
+    suspend fun setResponseFile(id: Long, path: String?)
+
+    @Query("UPDATE responses SET text = :text WHERE id = :id")
+    suspend fun setResponseText(id: Long, text: String)
 
     @Query("UPDATE responses SET kind = :kind WHERE id = :id")
     suspend fun setResponseKind(id: Long, kind: String?)
@@ -145,7 +174,7 @@ interface NoteDao {
     suspend fun deleteResponse(response: ClaudeResponse)
 }
 
-@Database(entities = [Note::class, ClaudeResponse::class], version = 3, exportSchema = false)
+@Database(entities = [Note::class, ClaudeResponse::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
 
@@ -165,9 +194,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 0.7 → 0.8: immagine abbinata al testo di mappe e infografiche. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE responses ADD COLUMN filePath TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "appunti.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

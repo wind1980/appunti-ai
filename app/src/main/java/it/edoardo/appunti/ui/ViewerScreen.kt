@@ -36,8 +36,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import it.edoardo.appunti.app
 import it.edoardo.appunti.data.ClaudeResponse
-import it.edoardo.appunti.data.KIND_IMAGE
-import it.edoardo.appunti.data.KIND_PDF
+import it.edoardo.appunti.data.file
+import it.edoardo.appunti.share.ResponseCleaner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import it.edoardo.appunti.data.PromptKind
@@ -50,18 +50,22 @@ import java.util.Locale
 /** Che cosa mostra il visualizzatore per una risposta salvata. */
 enum class ViewKind { MAP, HTML, IMAGE, PDF }
 
-fun viewKindOf(r: ClaudeResponse): ViewKind? = when {
-    r.kind == KIND_IMAGE -> ViewKind.IMAGE
-    r.kind == KIND_PDF -> ViewKind.PDF
-    r.kind == PromptKind.INFOGRAPHIC.key -> ViewKind.HTML
-    r.kind == PromptKind.MINDMAP.key && MindMap.looksLikeMap(r.text) -> ViewKind.MAP
-    else -> null
+/** Che cosa si apre a schermo intero: l'immagine/PDF se c'è, altrimenti la pagina o la mappa disegnata. */
+fun viewKindOf(r: ClaudeResponse): ViewKind? {
+    r.file()?.let { return if (it.lowercase().endsWith(".pdf")) ViewKind.PDF else ViewKind.IMAGE }
+    if (r.kind == PromptKind.INFOGRAPHIC.key && ResponseCleaner.extractHtml(r.text) != null) return ViewKind.HTML
+    if (r.kind == PromptKind.MINDMAP.key && MindMap.looksLikeMap(r.text)) return ViewKind.MAP
+    return null
 }
+
+/** Va nella scheda Grafica: mappe, infografiche, immagini e PDF. */
+fun isVisual(r: ClaudeResponse): Boolean =
+    r.file() != null || r.kind == PromptKind.MINDMAP.key || r.kind == PromptKind.INFOGRAPHIC.key
 
 /** Mappa concettuale, infografica o immagine a schermo intero, ingrandibile e salvabile. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
+fun ViewerScreen(responseId: Long, forceMap: Boolean = false, onBack: () -> Unit) {
     val context = LocalContext.current
     var response by remember { mutableStateOf<ClaudeResponse?>(null) }
     var title by remember { mutableStateOf("") }
@@ -73,7 +77,7 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
     var webView by remember { mutableStateOf<WebView?>(null) }
 
     val r = response
-    val kind = r?.let { viewKindOf(it) }
+    val kind = r?.let { if (forceMap) ViewKind.MAP else viewKindOf(it) }
     val label = when (kind) {
         ViewKind.MAP -> "Mappa"
         ViewKind.HTML -> "Infografica"
@@ -94,15 +98,17 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
                 actions = {
                     IconButton(onClick = {
                         val file = when (kind) {
-                            ViewKind.IMAGE, ViewKind.PDF -> r?.let { File(it.text) }
+                            ViewKind.IMAGE, ViewKind.PDF -> r?.file()?.let { File(it) }
                             else -> webView?.let { capture(context, it, label) }
                         }
-                        if (file != null) ClaudeShare.shareFile(context, file, if (kind == ViewKind.PDF) "application/pdf" else "image/*", "$label – $title")
+                        // Si condividono insieme immagine e testo (se la scheda ha anche il testo).
+                        val text = r?.let { rr -> rr.text.takeIf { it.isNotBlank() && rr.file() != null && ResponseCleaner.extractHtml(it) == null } }
+                        if (file != null) ClaudeShare.shareFileWithText(context, file, text, "$label – $title")
                         else Toast.makeText(context, "Immagine non pronta, riprova tra un attimo", Toast.LENGTH_SHORT).show()
                     }) { Icon(Icons.Default.Share, contentDescription = "Condividi") }
                     IconButton(onClick = {
                         val file = when (kind) {
-                            ViewKind.IMAGE, ViewKind.PDF -> r?.let { File(it.text) }
+                            ViewKind.IMAGE, ViewKind.PDF -> r?.file()?.let { File(it) }
                             else -> webView?.let { capture(context, it, label) }
                         }
                         if (file != null) saveToDevice(context, file) else
@@ -118,7 +124,7 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
         }
         var pdfPages by remember(r.id) { mutableStateOf<List<File>?>(null) }
         if (kind == ViewKind.PDF) LaunchedEffect(r.id) {
-            pdfPages = withContext(Dispatchers.IO) { PdfPages.renderAll(context, r.text) }
+            pdfPages = withContext(Dispatchers.IO) { PdfPages.renderAll(context, r.file() ?: "") }
         }
         val html = remember(r.id, pdfPages) {
             when (kind) {
@@ -133,7 +139,7 @@ fun ViewerScreen(responseId: Long, onBack: () -> Unit) {
                 ViewKind.HTML -> r.text
                 ViewKind.IMAGE -> """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, user-scalable=yes">
 <style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh}img{max-width:100%}</style>
-</head><body><img src="file://${r.text}"></body></html>"""
+</head><body><img src="file://${r.file()}"></body></html>"""
             }
         }
         AndroidView(

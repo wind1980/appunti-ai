@@ -70,14 +70,19 @@ class MainActivity : ComponentActivity() {
                             onBack = { nav.popBackStack() },
                             onSettings = { nav.navigate("settings") },
                             onOpenResponse = { rid -> nav.navigate("view/$rid") },
+                            onOpenMap = { rid -> nav.navigate("view/$rid?map=true") },
                         )
                     }
                     composable(
-                        "view/{rid}",
-                        arguments = listOf(navArgument("rid") { type = NavType.LongType }),
+                        "view/{rid}?map={map}",
+                        arguments = listOf(
+                            navArgument("rid") { type = NavType.LongType },
+                            navArgument("map") { type = NavType.BoolType; defaultValue = false },
+                        ),
                     ) { entry ->
                         ViewerScreen(
                             responseId = entry.arguments?.getLong("rid") ?: 0L,
+                            forceMap = entry.arguments?.getBoolean("map") ?: false,
                             onBack = { nav.popBackStack() },
                         )
                     }

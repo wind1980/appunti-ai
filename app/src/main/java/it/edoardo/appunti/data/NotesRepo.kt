@@ -157,30 +157,38 @@ object NotesRepo {
      * Salva una risposta di Claude nella nota. Se è un riassunto e la nota ha ancora un titolo
      * automatico ("Registrazione …" o il nome di un file), usa il titolo proposto da Claude.
      */
-    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null, strict: Boolean = false): Boolean {
+    /** Tipi che sono "schede doppie": testo e immagine di Claude stanno insieme. */
+    private val PAIRED = setOf(PromptKind.MINDMAP.key, PromptKind.INFOGRAPHIC.key)
+
+    /** Testo e immagine arrivati entro 6 ore vengono abbinati nella stessa scheda. */
+    private fun pairingWindow() = System.currentTimeMillis() - 6 * 3_600_000L
+
+    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null): Boolean {
         // Il testo originale (quello negli appunti) è "gestito": non va riproposto.
         context.app.prefs.handledClipHash = text.trim().hashCode()
         val cleaned = ResponseCleaner.clean(text)
         var clean = cleaned.text
         var finalKind = kind
-        when {
-            cleaned.isHtml -> finalKind = PromptKind.INFOGRAPHIC.key
-            // Infografica chiesta esplicitamente ma negli appunti non c'è codice HTML: non si salva.
-            kind == PromptKind.INFOGRAPHIC.key && strict -> return false
-            kind == PromptKind.INFOGRAPHIC.key -> finalKind = null
-            else -> {
-                // Mappa scritta da Claude in formato mermaid: diventa l'elenco che MeNoter disegna.
-                val norm = MindMap.normalize(clean)
-                if (norm != clean) {
-                    clean = norm
-                    finalKind = PromptKind.MINDMAP.key
-                }
+        if (cleaned.isHtml) {
+            finalKind = PromptKind.INFOGRAPHIC.key
+        } else {
+            // Mappa scritta da Claude in formato mermaid: diventa l'elenco che MeNoter disegna.
+            val norm = MindMap.normalize(clean)
+            if (norm != clean) {
+                clean = norm
+                finalKind = PromptKind.MINDMAP.key
             }
         }
         val dao = context.app.db.notes()
-        dao.insertResponse(
-            ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = finalKind)
-        )
+        // Mappa o infografica: se l'immagine è arrivata prima, il testo va nella stessa scheda.
+        val pending = finalKind?.takeIf { it in PAIRED }?.let { dao.latestWithoutText(noteId, it, pairingWindow()) }
+        if (pending != null) {
+            dao.setResponseText(pending.id, clean)
+        } else {
+            dao.insertResponse(
+                ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = finalKind)
+            )
+        }
         if (kind == PromptKind.SUMMARY.key) {
             val note = dao.get(noteId) ?: return true
             val heading = clean.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
@@ -190,12 +198,15 @@ object NotesRepo {
         return true
     }
 
-    /** Immagine (PNG, JPG…) o PDF creato da Claude, salvato nella nota come file. */
-    suspend fun saveFile(context: Context, noteId: Long, uri: Uri) = withContext(Dispatchers.IO) {
+    /** Copia nell'app un'immagine o un PDF ricevuto. */
+    private suspend fun copyIn(context: Context, uri: Uri): File = withContext(Dispatchers.IO) {
         val type = context.contentResolver.getType(uri) ?: ""
         var name = ""
-        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) name = c.getString(0) ?: ""
+        try {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) name = c.getString(0) ?: ""
+            }
+        } catch (_: Exception) {
         }
         val isPdf = type == "application/pdf" || name.lowercase().endsWith(".pdf")
         val ext = when {
@@ -207,12 +218,49 @@ object NotesRepo {
         val dir = File(context.filesDir, "images").apply { mkdirs() }
         val dest = File(dir, "file-${System.currentTimeMillis()}.$ext")
         context.contentResolver.openInputStream(uri)!!.use { input -> dest.outputStream().use { input.copyTo(it) } }
-        context.app.db.notes().insertResponse(
-            ClaudeResponse(
-                noteId = noteId, createdAt = System.currentTimeMillis(), text = dest.absolutePath,
-                kind = if (isPdf) KIND_PDF else KIND_IMAGE,
+        dest
+    }
+
+    /**
+     * Immagine (PNG, JPG…) o PDF creato da Claude, salvato nella nota.
+     * Con [kind] Mappa o Infografica viene abbinato al testo dello stesso tipo arrivato da poco,
+     * altrimenti diventa una scheda a sé (a cui si potrà aggiungere il testo).
+     */
+    suspend fun saveFile(context: Context, noteId: Long, uri: Uri, kind: String? = null) {
+        val dest = copyIn(context, uri)
+        val dao = context.app.db.notes()
+        if (kind != null && kind in PAIRED) {
+            val pending = dao.latestWithoutFile(noteId, kind, pairingWindow())
+            if (pending != null) {
+                dao.setResponseFile(pending.id, dest.absolutePath)
+            } else {
+                dao.insertResponse(
+                    ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = "", kind = kind, filePath = dest.absolutePath)
+                )
+            }
+        } else {
+            dao.insertResponse(
+                ClaudeResponse(
+                    noteId = noteId, createdAt = System.currentTimeMillis(), text = dest.absolutePath,
+                    kind = if (dest.extension == "pdf") KIND_PDF else KIND_IMAGE,
+                )
             )
-        )
+        }
+    }
+
+    /** Aggiunge (o sostituisce) l'immagine di una scheda già esistente. */
+    suspend fun attachFile(context: Context, r: ClaudeResponse, uri: Uri) {
+        val dest = copyIn(context, uri)
+        r.filePath?.let { old -> withContext(Dispatchers.IO) { File(old).delete() } }
+        context.app.db.notes().setResponseFile(r.id, dest.absolutePath)
+    }
+
+    /** Aggiunge il testo (copiato da Claude) a una scheda che ha solo l'immagine. */
+    suspend fun attachText(context: Context, r: ClaudeResponse, text: String) {
+        context.app.prefs.handledClipHash = text.trim().hashCode()
+        val cleaned = ResponseCleaner.clean(text)
+        val body = if (r.kind == PromptKind.MINDMAP.key) MindMap.normalize(cleaned.text) else cleaned.text
+        context.app.db.notes().setResponseText(r.id, body)
     }
 
     /** Nuova nota che contiene solo un'immagine condivisa. */
@@ -226,7 +274,7 @@ object NotesRepo {
     }
 
     suspend fun deleteResponse(context: Context, r: ClaudeResponse) {
-        if (r.kind == KIND_IMAGE || r.kind == KIND_PDF) withContext(Dispatchers.IO) { File(r.text).delete() }
+        withContext(Dispatchers.IO) { r.file()?.let { File(it).delete() } }
         context.app.db.notes().deleteResponse(r)
     }
 

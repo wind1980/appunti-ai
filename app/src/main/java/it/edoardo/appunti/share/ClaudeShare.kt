@@ -134,6 +134,26 @@ object ClaudeShare {
         })
     }
 
+    /** Condivide immagine (o PDF) e testo insieme: WhatsApp, email e molte app li ricevono entrambi. */
+    fun shareFileWithText(context: Context, file: File, text: String?, subject: String) {
+        val mime = if (file.extension.lowercase() == "pdf") "application/pdf" else "image/*"
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            if (!text.isNullOrBlank()) putExtra(Intent.EXTRA_TEXT, text)
+            clipData = ClipData.newUri(context.contentResolver, file.name, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Condividi").apply {
+            putExtra(
+                Intent.EXTRA_EXCLUDE_COMPONENTS,
+                arrayOf(ComponentName(context, ReceiveTextActivity::class.java))
+            )
+        })
+    }
+
     fun shareDir(context: Context): File = File(context.cacheDir, "share").apply { mkdirs() }
 
     private fun writeTxt(context: Context, name: String, text: String): File {
