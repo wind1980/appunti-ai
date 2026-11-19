@@ -1,6 +1,20 @@
-# MeNoter – versione 0.7
+# MeNoter – versione 0.8
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
+
+## Novità della 0.8 (funzioni prese da HiNoter)
+
+- **Interlocutori**: nuovo pulsante. Claude riscrive la trascrizione dividendola per chi parla (nomi veri se si capiscono, altrimenti "Persona 1, 2…"). Nella scheda Trascrizione si passa da "Con interlocutori" a "Originale"; il minuto di ogni intervento porta all'audio.
+- **Modelli**: nuovo pulsante con Riassunto breve / normale / dettagliato e i **modelli personali** (Impostazioni › Modelli personali: nome + comando per Claude; ci sono tre esempi pronti: Verbale, Appunti di lezione, Punti chiave). Il livello del pulsante "Riassunto" si sceglie nelle Impostazioni.
+- **Attività**: salvando la risposta "Azioni", le cose da fare diventano un elenco da spuntare in cima al Riepilogo, con responsabile e scadenza modificabili e il pulsante 📅 che apre il Calendario con il promemoria già compilato. Nuova schermata **Attività** (icona in alto nella home) con tutte le attività di tutte le note; in home un riquadro ricorda quante sono da fare e quante scadute.
+- **Domande su più note**: icona 💬 in alto nella home → tocca le note da includere (o "Tutte"), scrivi la domanda e Claude riceve un unico file con riassunti e trascrizioni. La risposta si salva in una nuova nota "Domanda su N note".
+- **Traduci in altre lingue**: il pulsante chiede la lingua (inglese, francese, spagnolo, tedesco… resta l'ultima scelta).
+- **Esporta**: menu ⋮ della nota → PDF (con mappe e immagini), Word (.docx), TXT o Markdown, scegliendo cosa includere; poi si manda dove si vuole (Drive, email, Notion, OneNote…).
+- **Ricerca nella trascrizione** con le parole evidenziate; aprendo una nota dalla ricerca della home, la trascrizione è già filtrata sulla parola cercata.
+
+Non serve nessuna API né abbonamento a minuti: tutto passa dall'app Claude con il piano Pro.
+
+Funzioni di HiNoter che restano fuori perché richiedono un server: partecipazione automatica alle riunioni del calendario, trascrizione di link YouTube, trascrizione in tempo reale nel cloud, app per Wear OS.
 
 ## Novità della 0.7
 
@@ -84,7 +98,8 @@ La prima compilazione dura qualche minuto, perché compila anche whisper.cpp in 
 
 ## Limiti noti
 
-- Non distingue chi parla.
+- Chi parla lo ricostruisce Claude dal contenuto (pulsante "Interlocutori"), non dalla voce: con molte persone o battute brevi può sbagliare.
+- Per registrazioni molto lunghe Claude può dividere la trascrizione con interlocutori in più risposte ("(continua)"): salva ognuna come "Interlocutori" oppure chiedi un riassunto.
 - Non registra l'audio delle chiamate di Meet, Teams o Zoom (Android lo impedisce): registra dal microfono con il vivavoce e avvisa i partecipanti.
 - La libreria è compilata per ARMv8.2 (telefoni dal 2018 circa). Su telefoni più vecchi l'app si chiude all'avvio della trascrizione: in `app/src/main/cpp/CMakeLists.txt` sostituisci `armv8.2-a+fp16+dotprod` con `armv8-a`.
 - Il codice Kotlin è stato scritto senza poterlo compilare (l'ambiente di sviluppo non aveva accesso agli strumenti Android). La parte nativa invece è stata compilata e provata. Se Android Studio segnala errori alla prima compilazione, copiali e li sistemiamo.
