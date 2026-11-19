@@ -153,7 +153,9 @@ fun NoteScreen(
     var tab by rememberSaveable { mutableIntStateOf(-1) }
     val selectedTab = if (tab >= 0) tab else if (responses.isEmpty() || initialQuery.isNotBlank()) 2 else 0
     // La trascrizione divisa per interlocutore si vede nella scheda Trascrizione.
-    val speakersResponse = responses.firstOrNull { it.kind == PromptKind.SPEAKERS.key }
+    // Se Claude l'ha divisa in più risposte ("continua"), si uniscono in ordine.
+    val speakerParts = responses.filter { it.kind == PromptKind.SPEAKERS.key }.sortedBy { it.createdAt }
+    val speakersText = speakerParts.takeIf { it.isNotEmpty() }?.joinToString("\n") { it.text }
     val textResponses = responses.filter { viewKindOf(it) == null && it.kind != PromptKind.SPEAKERS.key }
     val visualResponses = responses.filter { viewKindOf(it) != null }
     val addFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -432,7 +434,7 @@ fun NoteScreen(
                     )
                 }
                 val q = transcriptQuery.trim()
-                val turns = if (speakersResponse != null && showSpeakers) parseTurns(speakersResponse.text) else null
+                val turns = if (speakersText != null && showSpeakers) parseTurns(speakersText) else null
                 if (hasText) item(key = "search") {
                     val matches = when {
                         q.isEmpty() -> 0
@@ -441,7 +443,7 @@ fun NoteScreen(
                     }
                     TranscriptSearchField(transcriptQuery, matches) { transcriptQuery = it }
                 }
-                if (speakersResponse != null) item(key = "speakers-toggle") {
+                if (speakersText != null) item(key = "speakers-toggle") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) {
                             SegmentedTabs(
@@ -450,7 +452,7 @@ fun NoteScreen(
                                 onSelect = { showSpeakers = it == 0 },
                             )
                         }
-                        if (showSpeakers) IconButton(onClick = { scope.launch { NotesRepo.deleteResponse(context, speakersResponse) } }) {
+                        if (showSpeakers) IconButton(onClick = { scope.launch { speakerParts.forEach { NotesRepo.deleteResponse(context, it) } } }) {
                             Icon(Icons.Default.Delete, contentDescription = "Elimina la versione con interlocutori",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
