@@ -174,7 +174,7 @@ interface NoteDao {
     suspend fun deleteResponse(response: ClaudeResponse)
 }
 
-@Database(entities = [Note::class, ClaudeResponse::class], version = 4, exportSchema = false)
+@Database(entities = [Note::class, ClaudeResponse::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
 
@@ -201,9 +201,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * 4 → 5: esistono due "versione 4" diverse (questa, con l'immagine abbinata, e quella del ramo
+         * menoter-0.8, con la tabella delle attività). Qui si aggiunge solo ciò che manca, così il
+         * database funziona qualunque delle due fosse installata prima.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val columns = mutableSetOf<String>()
+                db.query("PRAGMA table_info(`responses`)").use { c ->
+                    val name = c.getColumnIndex("name")
+                    while (c.moveToNext()) columns += c.getString(name)
+                }
+                if ("filePath" !in columns) db.execSQL("ALTER TABLE responses ADD COLUMN filePath TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "appunti.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }
