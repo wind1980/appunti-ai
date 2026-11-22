@@ -54,6 +54,13 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import it.edoardo.appunti.share.NoteExport
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -136,21 +143,30 @@ fun NoteScreen(
     val paragraphs = remember(n.segments) { Transcript.paragraphs(Transcript.parse(n.segments)) }
     val hasText = paragraphs.isNotEmpty()
 
-    // 0 = Riepilogo AI, 1 = Grafica, 2 = Trascrizione. Si apre sulla trascrizione finché non ci sono risposte.
+    // Schede: Riassunto, Mappa, Infografica, Altro, Trascrizione.
+    // Si apre sulla trascrizione finché non ci sono risposte.
     var tab by rememberSaveable { mutableIntStateOf(-1) }
-    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) 2 else 0
-    val textResponses = responses.filter { !isVisual(it) }
-    val visualResponses = responses.filter { isVisual(it) }
+    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) TAB_TEXT else
+        NotesRepo.SECTIONS.indexOfFirst { k -> responses.any { sectionOf(it) == k } }.takeIf { it >= 0 } ?: TAB_OTHER
+    val otherResponses = responses.filter { sectionOf(it) == null }
+    // Immagine o PDF scelto dal telefono: va nella sezione da cui lo si è chiesto (null = Altro).
+    var fileKind by rememberSaveable { mutableStateOf<String?>(null) }
     val addFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
-                NotesRepo.saveFile(context, n.id, uri)
-                tab = 1
+                val k = PromptKind.fromKey(fileKind)
+                NotesRepo.saveFile(context, n.id, uri, k?.key)
+                tab = tabFor(k)
             } catch (e: Exception) {
                 Toast.makeText(context, "Impossibile aggiungere il file: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
+    fun pickFile(kind: PromptKind?) {
+        fileKind = kind?.key
+        addFile.launch(arrayOf("image/*", "application/pdf"))
+    }
+    var exporting by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -189,19 +205,19 @@ fun NoteScreen(
         // Sempre una richiesta completa (comando + trascrizione): Claude non torna sulla chat
         // precedente quando lo si riapre da fuori, quindi ogni invio deve bastare da solo.
         ClaudeShare.share(context, n, kind, question)
-        // Al ritorno si è già sulla scheda giusta: Grafica per mappe e infografiche, Riepilogo per il resto.
-        tab = if (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) 1 else 0
+        // Al ritorno si è già sulla sezione giusta.
+        tab = tabFor(kind)
     }
 
     var pasteMenu by remember { mutableStateOf(false) }
 
     /** Salva un testo copiato da Claude con il tipo scelto (null = testo normale). */
-    fun saveAs(text: String, kind: PromptKind?) {
+    fun saveAs(text: String, kind: PromptKind?, explicit: Boolean = false) {
         scope.launch {
-            NotesRepo.saveResponse(context, n.id, text, kind?.key)
+            val saved = PromptKind.fromKey(NotesRepo.saveResponse(context, n.id, text, kind?.key, explicit))
             clip = null
-            tab = if (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) 1 else 0
-            Toast.makeText(context, "Salvata" + (kind?.let { " come ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
+            tab = tabFor(saved)
+            Toast.makeText(context, "Testo salvato" + (saved?.let { " in ${sectionLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -212,11 +228,36 @@ fun NoteScreen(
                 prefs.handledClipHash = uri.toString().hashCode()
                 NotesRepo.saveFile(context, n.id, uri, kind?.key)
                 clipImage = null
-                tab = 1
-                Toast.makeText(context, "Immagine salvata" + (kind?.let { " nella ${typeLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
+                tab = tabFor(kind)
+                Toast.makeText(context, "Immagine salvata" + (kind?.let { " in ${sectionLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "Impossibile leggere l'immagine copiata: condividila con \"Salva in MeNoter\"", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    /** "Incolla testo" di una sezione. */
+    fun pasteText(kind: PromptKind) {
+        val text = readClipboard(context)
+        if (text.isNullOrBlank()) {
+            Toast.makeText(context, "Negli appunti non c'è testo: in Claude tocca Copia sotto la risposta", Toast.LENGTH_LONG).show()
+        } else {
+            saveAs(text, kind, explicit = true)
+        }
+    }
+
+    /** "Incolla immagine" di una sezione. */
+    fun pasteImage(kind: PromptKind) {
+        val uri = readClipboardFile(context)
+        if (uri == null) {
+            Toast.makeText(
+                context,
+                "Negli appunti non c'è un'immagine. In Claude tieni premuta l'immagine → Copia, " +
+                    "oppure Condividi → \"Salva in MeNoter\", oppure usa \"Dal telefono\".",
+                Toast.LENGTH_LONG,
+            ).show()
+        } else {
+            saveImageAs(uri, kind)
         }
     }
 
@@ -245,9 +286,17 @@ fun NoteScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro") }
                 },
                 actions = {
+                    IconButton(onClick = { exporting = true }) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = "Salva la nota completa su OneDrive")
+                    }
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Altro") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Rinomina") }, onClick = { menu = false; renaming = true })
+                        DropdownMenuItem(
+                            text = { Text("Salva nota completa (OneDrive…)") },
+                            leadingIcon = { Icon(Icons.Default.CloudUpload, contentDescription = null) },
+                            onClick = { menu = false; exporting = true },
+                        )
                         if (hasText) {
                             DropdownMenuItem(
                                 text = { Text("Copia trascrizione") },
@@ -329,7 +378,7 @@ fun NoteScreen(
                         kind = PromptKind.fromKey(prefs.lastSentKind),
                         // L'infografica viene riconosciuta da sola se c'è il codice HTML.
                         onSave = {
-                            saveAs(text, PromptKind.fromKey(prefs.lastSentKind)?.takeIf { it != PromptKind.ASK && it != PromptKind.INFOGRAPHIC })
+                            saveAs(text, PromptKind.fromKey(prefs.lastSentKind)?.takeIf { it != PromptKind.ASK })
                         },
                         onSaveAs = { kind -> saveAs(text, kind) },
                         onIgnore = {
@@ -341,17 +390,32 @@ fun NoteScreen(
             }
             item {
                 SegmentedTabs(
-                    labels = listOf("Riepilogo AI", "Grafica", "Trascrizione"),
+                    labels = listOf("Riassunto", "Mappa", "Infografica", "Altro", "Trascrizione"),
                     selected = selectedTab,
                     onSelect = { tab = it },
                 )
             }
 
-            if (selectedTab == 0) {
+            val section = NotesRepo.SECTIONS.getOrNull(selectedTab)
+            if (section != null) {
+                val list = responses.filter { sectionOf(it) == section }
+                item {
+                    SectionHeader(
+                        kind = section,
+                        onPasteText = { pasteText(section) },
+                        onPasteImage = { pasteImage(section) },
+                        onPickFile = { pickFile(section) },
+                    )
+                }
+                if (list.isEmpty()) item { EmptySection(section, hasText) { send(section) } }
+                items(list, key = { "s${it.id}" }) { r ->
+                    VisualCard(n, r, onOpen = { onOpenResponse(r.id) }, onOpenMap = { onOpenMap(r.id) })
+                }
+            } else if (selectedTab == TAB_OTHER) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            if (responses.isEmpty()) "" else "Risposte di Claude",
+                            "Azioni, traduzioni, email, domande e altri file",
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f),
                         )
@@ -368,53 +432,22 @@ fun NoteScreen(
                         }
                     }
                 }
-                if (textResponses.isEmpty()) item { EmptySummary(hasText) { send(PromptKind.SUMMARY) } }
-                items(textResponses, key = { "r${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
-            } else if (selectedTab == 1) {
                 item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (visualResponses.isEmpty()) "" else "Mappe, infografiche e file",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.weight(1f),
-                        )
-                        var graphicsMenu by remember { mutableStateOf(false) }
-                        Box {
-                            TextButton(onClick = { graphicsMenu = true }) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Incolla come…")
-                            }
-                            DropdownMenu(expanded = graphicsMenu, onDismissRequest = { graphicsMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Mappa concettuale (testo o immagine)") },
-                                    leadingIcon = { Icon(PromptKind.MINDMAP.icon(), contentDescription = null) },
-                                    onClick = { graphicsMenu = false; pasteAs(PromptKind.MINDMAP) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Infografica (testo o immagine)") },
-                                    leadingIcon = { Icon(PromptKind.INFOGRAPHIC.icon(), contentDescription = null) },
-                                    onClick = { graphicsMenu = false; pasteAs(PromptKind.INFOGRAPHIC) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Aggiungi immagine o PDF dal telefono…") },
-                                    leadingIcon = { Icon(Icons.Default.AddPhotoAlternate, contentDescription = null) },
-                                    onClick = { graphicsMenu = false; addFile.launch(arrayOf("image/*", "application/pdf")) },
-                                )
-                            }
-                        }
+                    TextButton(onClick = { pickFile(null) }) {
+                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Aggiungi immagine o PDF dal telefono")
                     }
                 }
-                if (visualResponses.isEmpty()) item {
-                    EmptyGraphics(
-                        hasText = hasText,
-                        onMap = { send(PromptKind.MINDMAP) },
-                        onInfographic = { send(PromptKind.INFOGRAPHIC) },
+                if (otherResponses.isEmpty()) item {
+                    Text(
+                        "Qui finiscono le altre risposte di Claude (Azioni, Traduci, Email, domande libere).",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
-                items(visualResponses, key = { "v${it.id}" }) { r ->
-                    VisualCard(n, r, onOpen = { onOpenResponse(r.id) }, onOpenMap = { onOpenMap(r.id) })
-                }
+                items(otherResponses, key = { "r${it.id}" }) { r -> ResponseCard(n, r, onOpen = { onOpenResponse(r.id) }) }
             } else {
                 if (!hasText) item {
                     Text(
@@ -444,6 +477,8 @@ fun NoteScreen(
             }
         }
     }
+
+    if (exporting) ExportDialog(n, responses, onDismiss = { exporting = false })
 
     if (renaming) {
         var title by remember { mutableStateOf(n.title) }
@@ -477,6 +512,152 @@ fun NoteScreen(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Annulla") } },
         )
     }
+}
+
+private const val TAB_OTHER = 3
+private const val TAB_TEXT = 4
+
+/** Sezione (Riassunto, Mappa, Infografica) a cui appartiene una risposta; null = "Altro". */
+private fun sectionOf(r: ClaudeResponse): PromptKind? =
+    PromptKind.fromKey(r.kind)?.takeIf { it in NotesRepo.SECTIONS }
+
+private fun tabFor(kind: PromptKind?): Int =
+    NotesRepo.SECTIONS.indexOf(kind).takeIf { it >= 0 } ?: TAB_OTHER
+
+private fun sectionLabel(kind: PromptKind) = when (kind) {
+    PromptKind.SUMMARY -> "Riassunto"
+    PromptKind.MINDMAP -> "Mappa"
+    PromptKind.INFOGRAPHIC -> "Infografica"
+    else -> "Altro"
+}
+
+/** Intestazione di una sezione: i due modi di incollare, ben visibili. */
+@Composable
+private fun SectionHeader(kind: PromptKind, onPasteText: () -> Unit, onPasteImage: () -> Unit, onPickFile: () -> Unit) {
+    Column {
+        Text(
+            "Incolla qui ciò che hai copiato da Claude: testo, immagine o entrambi finiscono nella stessa scheda.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onPasteText, modifier = Modifier.weight(1f)) {
+                Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Incolla testo", maxLines = 1)
+            }
+            OutlinedButton(onClick = onPasteImage, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Incolla immagine", maxLines = 1)
+            }
+            IconButton(onClick = onPickFile) {
+                Icon(Icons.Default.FolderOpen, contentDescription = "Immagine o PDF dal telefono (${sectionLabel(kind)})",
+                    tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptySection(kind: PromptKind, hasText: Boolean, onAsk: () -> Unit) {
+    AppCard {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(56.dp).clip(CircleShape).background(BrandGradient),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(kind.icon(), contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("Nessun${if (kind == PromptKind.SUMMARY) "" else "a"} ${sectionLabel(kind).lowercase()} ancora",
+                style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (hasText) "1. Tocca il pulsante qui sotto: si apre Claude con la trascrizione, tu premi Invia.\n" +
+                    "2. In Claude copia la risposta e torna qui: MeNoter te la propone (o tocca \"Incolla testo\").\n" +
+                    "3. Se Claude ha creato un'immagine, tienila premuta → Copia, torna qui e tocca \"Incolla immagine\"."
+                else "Quando la trascrizione è pronta potrai mandarla a Claude da qui. Intanto puoi già incollare testo o immagini.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
+            GradientButton("${kind.label} con Claude", kind.icon(), onAsk, enabled = hasText)
+        }
+    }
+}
+
+/** Salva l'intera nota (trascrizione, sezioni, file e, a scelta, l'audio) su OneDrive o altrove. */
+@Composable
+private fun ExportDialog(note: Note, responses: List<ClaudeResponse>, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var audio by rememberSaveable { mutableStateOf(false) }
+    var asZip by rememberSaveable { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    val hasOneDrive = remember { NoteExport.oneDriveInstalled(context) }
+
+    fun go(oneDrive: Boolean) {
+        busy = true
+        scope.launch {
+            try {
+                val files = NoteExport.build(context, note, responses, audio)
+                val ok = if (oneDrive) NoteExport.toOneDrive(context, note, files, asZip) else {
+                    NoteExport.toAnyApp(context, note, files, asZip); true
+                }
+                if (!ok) {
+                    Toast.makeText(context, "OneDrive non risponde: scegli l'app dall'elenco", Toast.LENGTH_LONG).show()
+                    NoteExport.toAnyApp(context, note, files, asZip)
+                }
+                onDismiss()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Esportazione non riuscita: ${e.message}", Toast.LENGTH_LONG).show()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        icon = { Icon(Icons.Default.CloudUpload, contentDescription = null) },
+        title = { Text("Salva la nota completa") },
+        text = {
+            Column {
+                Text(
+                    "Vengono salvati: una pagina \"Nota completa\" da aprire con il browser (riassunto, mappe, infografiche, " +
+                        "altre risposte e trascrizione), la trascrizione in .txt e ogni testo e immagine come file a parte.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (note.audioPath != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = audio, onCheckedChange = { audio = it })
+                    Text("Includi l'audio (file grande)")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = asZip, onCheckedChange = { asZip = it })
+                    Text("Tutto in un unico file .zip")
+                }
+                if (!hasOneDrive) Text(
+                    "L'app OneDrive non è installata: installala dal Play Store ed entra con il tuo account, " +
+                        "oppure scegli un'altra app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                if (busy) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Preparo i file…")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !busy && hasOneDrive, onClick = { go(true) }) { Text("Salva su OneDrive") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = { go(false) }) { Text("Altra app…") }
+        },
+    )
 }
 
 /** Immagine o PDF negli appunti (es. un'immagine copiata in Claude), se c'è. */
@@ -529,7 +710,7 @@ private fun ClipboardProposal(
             GradientButton(
                 when {
                     cleaned.isHtml -> "Salva infografica"
-                    kind != null && kind != PromptKind.ASK && kind != PromptKind.INFOGRAPHIC -> "Salva come ${typeLabel(kind)}"
+                    kind != null && kind != PromptKind.ASK -> "Salva in ${if (kind in NotesRepo.SECTIONS) sectionLabel(kind) else typeLabel(kind)}"
                     else -> "Salva nella nota"
                 },
                 Icons.Default.ContentPaste, onSave,
@@ -660,6 +841,7 @@ private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(50))
+            .horizontalScroll(rememberScrollState())
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .padding(4.dp),
     ) {
@@ -667,11 +849,10 @@ private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -
             val isSel = i == selected
             Box(
                 Modifier
-                    .weight(1f)
                     .clip(RoundedCornerShape(50))
                     .background(if (isSel) MaterialTheme.colorScheme.surfaceContainerLowest else Color.Transparent)
                     .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -680,63 +861,6 @@ private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -
                     color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun EmptyGraphics(hasText: Boolean, onMap: () -> Unit, onInfographic: () -> Unit) {
-    AppCard {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                Modifier.size(56.dp).clip(CircleShape).background(BrandGradient),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.AccountTree, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("Mappe e infografiche", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Claude risponde con un testo e un'immagine PNG. Copia il testo e torna qui: MeNoter te lo propone. " +
-                    "Poi fai lo stesso con l'immagine (tieni premuto → Copia, oppure Condividi → \"Salva in MeNoter\"): " +
-                    "testo e immagine finiscono nella stessa scheda.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GradientButton("Mappa", Icons.Default.AccountTree, onMap, enabled = hasText)
-                GradientButton("Infografica", Icons.Default.Dashboard, onInfographic, enabled = hasText)
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptySummary(hasText: Boolean, onSummarize: () -> Unit) {
-    AppCard {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                Modifier.size(56.dp).clip(CircleShape).background(BrandGradient),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("Nessun riepilogo ancora", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (hasText) "Tocca Riassumi: si apre Claude con la trascrizione già pronta, tu premi Invia. " +
-                    "Poi copia la risposta, torna qui e tocca \"Incolla come…\"."
-                else "Quando la trascrizione è pronta potrai mandarla a Claude da qui.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(16.dp))
-            GradientButton("Riassumi con Claude", Icons.Default.AutoAwesome, onSummarize, enabled = hasText)
         }
     }
 }
@@ -835,14 +959,15 @@ private fun ImageProposal(uri: Uri, suggested: PromptKind?, onSave: (PromptKind?
             )
         }
         Spacer(Modifier.height(12.dp))
-        val first = suggested?.takeIf { it == PromptKind.MINDMAP || it == PromptKind.INFOGRAPHIC }
+        val first = suggested?.takeIf { it in NotesRepo.SECTIONS }
         if (first != null) {
-            GradientButton("Aggiungi alla ${typeLabel(first)}", first.icon(), { onSave(first) })
+            GradientButton("Aggiungi a ${sectionLabel(first)}", first.icon(), { onSave(first) })
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (first != PromptKind.MINDMAP) TextButton(onClick = { onSave(PromptKind.MINDMAP) }) { Text("Mappa") }
-            if (first != PromptKind.INFOGRAPHIC) TextButton(onClick = { onSave(PromptKind.INFOGRAPHIC) }) { Text("Infografica") }
-            TextButton(onClick = { onSave(null) }) { Text("Solo immagine") }
+        Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            NotesRepo.SECTIONS.filter { it != first }.forEach { k ->
+                TextButton(onClick = { onSave(k) }) { Text(sectionLabel(k)) }
+            }
+            TextButton(onClick = { onSave(null) }) { Text("Altro") }
             TextButton(onClick = onIgnore) { Text("Ignora") }
         }
     }
@@ -861,8 +986,9 @@ private fun VisualCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit, onOpen
     val isPdf = file?.lowercase()?.endsWith(".pdf") == true
     val html = if (file == null && kind == PromptKind.INFOGRAPHIC) ResponseCleaner.extractHtml(r.text) else null
     val body = r.text.takeIf { file == null || r.filePath != null }?.takeIf { it.isNotBlank() && html == null }
-    val paired = kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC
+    val paired = kind in NotesRepo.SECTIONS
     val title = when {
+        kind == PromptKind.SUMMARY -> "Riassunto"
         kind == PromptKind.MINDMAP -> "Mappa concettuale"
         kind == PromptKind.INFOGRAPHIC -> "Infografica"
         isPdf -> "PDF"
@@ -919,13 +1045,11 @@ private fun VisualCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit, onOpen
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(12.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                Text("Manca l'immagine", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "In Claude tieni premuta l'immagine → Copia, poi tocca Incolla. Oppure Condividi → \"Salva in MeNoter\".",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (kind == PromptKind.SUMMARY) "Immagine (facoltativa)" else "Manca l'immagine",
+                    style = MaterialTheme.typography.labelLarge,
                 )
                 Row {
                     TextButton(onClick = {

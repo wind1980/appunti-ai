@@ -157,27 +157,35 @@ object NotesRepo {
      * Salva una risposta di Claude nella nota. Se è un riassunto e la nota ha ancora un titolo
      * automatico ("Registrazione …" o il nome di un file), usa il titolo proposto da Claude.
      */
-    /** Tipi che sono "schede doppie": testo e immagine di Claude stanno insieme. */
-    private val PAIRED = setOf(PromptKind.MINDMAP.key, PromptKind.INFOGRAPHIC.key)
+    /** Le tre sezioni con "schede doppie": testo e immagine di Claude stanno insieme. */
+    val SECTIONS = listOf(PromptKind.SUMMARY, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC)
+    private val PAIRED = SECTIONS.map { it.key }.toSet()
 
     /** Testo e immagine arrivati entro 6 ore vengono abbinati nella stessa scheda. */
     private fun pairingWindow() = System.currentTimeMillis() - 6 * 3_600_000L
 
-    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null): Boolean {
+    /**
+     * Salva il testo nella nota e restituisce il tipo con cui è stato salvato.
+     * Con [explicit] (l'utente ha scelto la sezione) il tipo non viene cambiato in automatico.
+     */
+    suspend fun saveResponse(context: Context, noteId: Long, text: String, kind: String? = null, explicit: Boolean = false): String? {
         // Il testo originale (quello negli appunti) è "gestito": non va riproposto.
         context.app.prefs.handledClipHash = text.trim().hashCode()
         val cleaned = ResponseCleaner.clean(text)
         var clean = cleaned.text
         var finalKind = kind
         if (cleaned.isHtml) {
-            finalKind = PromptKind.INFOGRAPHIC.key
-        } else {
+            if (!explicit || kind == null) finalKind = PromptKind.INFOGRAPHIC.key
+        } else if (!explicit || kind == PromptKind.MINDMAP.key) {
             // Mappa scritta da Claude in formato mermaid: diventa l'elenco che MeNoter disegna.
             val norm = MindMap.normalize(clean)
             if (norm != clean) {
                 clean = norm
                 finalKind = PromptKind.MINDMAP.key
             }
+        }
+        if (cleaned.isHtml && finalKind != PromptKind.INFOGRAPHIC.key) {
+            clean = text.trim()
         }
         val dao = context.app.db.notes()
         // Mappa o infografica: se l'immagine è arrivata prima, il testo va nella stessa scheda.
@@ -189,13 +197,13 @@ object NotesRepo {
                 ClaudeResponse(noteId = noteId, createdAt = System.currentTimeMillis(), text = clean, kind = finalKind)
             )
         }
-        if (kind == PromptKind.SUMMARY.key) {
-            val note = dao.get(noteId) ?: return true
+        if (finalKind == PromptKind.SUMMARY.key) {
+            val note = dao.get(noteId) ?: return finalKind
             val heading = clean.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
                 ?.takeIf { it.startsWith("#") }?.trimStart('#', ' ')?.trim()?.trim('*')
             if (heading != null && heading.length in 3..60 && isAutoTitle(note.title)) dao.rename(noteId, heading)
         }
-        return true
+        return finalKind
     }
 
     /** Copia nell'app un'immagine o un PDF ricevuto. */

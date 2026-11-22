@@ -13,6 +13,7 @@
     <!-- Serve per poter aprire direttamente l'app Claude (Android 11+). -->
     <queries>
         <package android:name="com.anthropic.claude" />
+        <package android:name="com.microsoft.skydrive" />
     </queries>
 
     <application

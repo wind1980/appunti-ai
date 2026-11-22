@@ -1,5 +1,9 @@
 package it.edoardo.appunti
 
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Row
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -63,9 +67,9 @@ class ReceiveTextActivity : ComponentActivity() {
         }
 
         /** Salva il contenuto ricevuto (immagine o testo) nella nota indicata. */
-        suspend fun saveTo(noteId: Long, kind: String?) {
+        suspend fun saveTo(noteId: Long, kind: String?, explicit: Boolean = false) {
             if (image != null) NotesRepo.saveFile(applicationContext, noteId, image, kind)
-            else NotesRepo.saveResponse(applicationContext, noteId, text, kind)
+            else NotesRepo.saveResponse(applicationContext, noteId, text, kind, explicit)
         }
 
         setContent {
@@ -118,8 +122,9 @@ class ReceiveTextActivity : ComponentActivity() {
                                     Spacer(Modifier.height(12.dp))
                                     GradientButton(
                                         text = when {
-                                            image != null && (kind == PromptKind.MINDMAP || kind == PromptKind.INFOGRAPHIC) ->
-                                                "Aggiungi alla ${if (kind == PromptKind.MINDMAP) "mappa" else "infografica"}"
+                                            kind == PromptKind.SUMMARY -> "Aggiungi al Riassunto"
+                                            kind == PromptKind.MINDMAP -> "Aggiungi alla Mappa"
+                                            kind == PromptKind.INFOGRAPHIC -> "Aggiungi all'Infografica"
                                             image != null -> "Salva qui"
                                             kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
                                             else -> "Salva qui"
@@ -132,6 +137,21 @@ class ReceiveTextActivity : ComponentActivity() {
                                             }
                                         },
                                     )
+                                    Text("Oppure mettilo in:", style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(top = 8.dp))
+                                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                                        listOf(
+                                            PromptKind.SUMMARY to "Riassunto", PromptKind.MINDMAP to "Mappa",
+                                            PromptKind.INFOGRAPHIC to "Infografica", null to "Altro",
+                                        ).filter { it.first != kind }.forEach { (k, label) ->
+                                            TextButton(onClick = {
+                                                scope.launch {
+                                                    saveTo(target.id, k?.key, explicit = true)
+                                                    done("Salvato in \"${target.title}\" · $label")
+                                                }
+                                            }) { Text(label) }
+                                        }
+                                    }
                                 }
                             }
                             item {
