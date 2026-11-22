@@ -1,5 +1,28 @@
 package it.edoardo.appunti
 
+import it.edoardo.appunti.ui.icon
+import it.edoardo.appunti.data.Status
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.Alignment
+import androidx.compose.runtime.Composable
+import androidx.compose.material3.Surface
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
+import android.graphics.BitmapFactory
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -75,17 +98,55 @@ class ReceiveTextActivity : ComponentActivity() {
         setContent {
             AppuntiTheme {
                 val scope = rememberCoroutineScope()
-                var notes by remember { mutableStateOf<List<Note>>(emptyList()) }
-                var recent by remember { mutableStateOf<Note?>(null) }
                 val prefs = app.prefs
+                var notes by remember { mutableStateOf<List<Note>>(emptyList()) }
+                var recentId by remember { mutableStateOf<Long?>(null) }
+                // Scelte dell'utente: nota (-1 = nuova) e sezione.
+                var noteId by remember { mutableStateOf<Long?>(null) }
+                val lastKind = PromptKind.fromKey(prefs.lastSentKind)
+                var section by remember { mutableStateOf(lastKind?.takeIf { it in NotesRepo.SECTIONS }) }
+                var otherChosen by remember { mutableStateOf(false) }
+                var saving by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
-                    notes = app.db.notes().recent()
-                    recent = prefs.recentSentNoteId()?.let { app.db.notes().get(it) }
+                    val list = app.db.notes().recent()
+                    val r = prefs.recentSentNoteId()?.let { app.db.notes().get(it) }
+                    notes = listOfNotNull(r) + list.filter { it.id != r?.id }
+                    recentId = r?.id
+                    noteId = r?.id
+                    // Niente di inviato di recente e nessuna sezione nota: per un testo si propone "Altro".
+                    if (section == null && lastKind != null && lastKind != PromptKind.ASK && r != null) otherChosen = true
                 }
+                val thumb = remember(image) {
+                    try {
+                        image?.let { u ->
+                            contentResolver.openInputStream(u)?.use {
+                                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = 4 })
+                            }
+                        }
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                val target = notes.firstOrNull { it.id == noteId }
+                val sectionName = section?.let { sectionLabel(it) } ?: if (otherChosen) "Altro" else null
+                val ready = noteId != null && sectionName != null && !saving
 
-                fun done(message: String) {
-                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-                    finish()
+                fun save() {
+                    val chosenNote = noteId ?: return
+                    saving = true
+                    // "Altro": mantiene il tipo della richiesta (Azioni, Email…) se non è una delle tre sezioni.
+                    val kind = section?.key ?: lastKind?.takeIf { it !in NotesRepo.SECTIONS && it != PromptKind.ASK }?.key
+                    scope.launch {
+                        val id = if (chosenNote == NEW_NOTE) {
+                            val title = if (image != null) "Grafica " + Transcript.date(System.currentTimeMillis())
+                            else text.lineSequence().map { it.trim().trimStart('#', '*', ' ') }.firstOrNull { it.isNotBlank() }?.take(60) ?: "Nota"
+                            app.db.notes().insert(Note(title = title, createdAt = System.currentTimeMillis(), audioPath = null, status = Status.TEXT))
+                        } else chosenNote
+                        saveTo(id, kind, explicit = section != null || otherChosen)
+                        val title = target?.title ?: "nuova nota"
+                        Toast.makeText(this@ReceiveTextActivity, "Salvato in \"$title\" → $sectionName", Toast.LENGTH_LONG).show()
+                        finish()
+                    }
                 }
 
                 Scaffold(
@@ -96,91 +157,98 @@ class ReceiveTextActivity : ComponentActivity() {
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                         )
                     },
+                    bottomBar = {
+                        Surface(shadowElevation = 12.dp, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
+                            Column(Modifier.navigationBarsPadding().padding(16.dp)) {
+                                Text(
+                                    when {
+                                        sectionName == null -> "Scegli la sezione (passo 1)"
+                                        noteId == null -> "Scegli la nota (passo 2)"
+                                        else -> "Andrà in: ${if (noteId == NEW_NOTE) "nuova nota" else "\"${target?.title}\""} → $sectionName"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                GradientButton(
+                                    text = if (saving) "Salvo…" else "Salva",
+                                    icon = Icons.Default.Check,
+                                    onClick = { save() },
+                                    enabled = ready,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    },
                 ) { padding ->
                     LazyColumn(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        // Che cosa si sta salvando
                         item {
-                            Text(
-                                if (image != null) "Immagine o PDF da salvare in una nota" else text,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            AppCard {
+                                Text(
+                                    if (image != null) "Stai salvando un'immagine" + (if (thumb == null) " o un PDF" else "")
+                                    else "Stai salvando un testo",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                if (thumb != null) {
+                                    Image(
+                                        bitmap = thumb.asImageBitmap(),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp).clip(RoundedCornerShape(10.dp)),
+                                    )
+                                } else if (image == null) {
+                                    Text(text, maxLines = 4, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+
+                                        item { StepTitle("1", "In quale sezione") }
+                        item {
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                NotesRepo.SECTIONS.forEach { k ->
+                                    FilterChip(
+                                        selected = section == k,
+                                        onClick = { section = k; otherChosen = false },
+                                        label = { Text(sectionLabel(k)) },
+                                        leadingIcon = { Icon(k.icon(), contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                    )
+                                }
+                                FilterChip(
+                                    selected = otherChosen,
+                                    onClick = { section = null; otherChosen = true },
+                                    label = { Text("Altro") },
+                                )
+                            }
+                        }
+
+                        item { StepTitle("2", "In quale nota") }
+                        item {
+                            NoteChoice(
+                                title = "+ Nuova nota",
+                                subtitle = null,
+                                badge = null,
+                                selected = noteId == NEW_NOTE,
+                                onClick = { noteId = NEW_NOTE },
                             )
                         }
-                        recent?.let { target ->
-                            item {
-                                val kind = PromptKind.fromKey(prefs.lastSentKind)
-                                AppCard(color = MaterialTheme.colorScheme.primaryContainer) {
-                                    Text("Nota da cui hai scritto a Claude", style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                    Text(target.title, style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    Spacer(Modifier.height(12.dp))
-                                    GradientButton(
-                                        text = when {
-                                            kind == PromptKind.SUMMARY -> "Aggiungi al Riassunto"
-                                            kind == PromptKind.MINDMAP -> "Aggiungi alla Mappa"
-                                            kind == PromptKind.INFOGRAPHIC -> "Aggiungi all'Infografica"
-                                            image != null -> "Salva qui"
-                                            kind != null && kind != PromptKind.ASK -> "Salva come ${kind.label}"
-                                            else -> "Salva qui"
-                                        },
-                                        icon = Icons.Default.Check,
-                                        onClick = {
-                                            scope.launch {
-                                                saveTo(target.id, prefs.lastSentKind)
-                                                done("Salvato in \"${target.title}\"")
-                                            }
-                                        },
-                                    )
-                                    Text("Oppure mettilo in:", style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(top = 8.dp))
-                                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                                        listOf(
-                                            PromptKind.SUMMARY to "Riassunto", PromptKind.MINDMAP to "Mappa",
-                                            PromptKind.INFOGRAPHIC to "Infografica", null to "Altro",
-                                        ).filter { it.first != kind }.forEach { (k, label) ->
-                                            TextButton(onClick = {
-                                                scope.launch {
-                                                    saveTo(target.id, k?.key, explicit = true)
-                                                    done("Salvato in \"${target.title}\" · $label")
-                                                }
-                                            }) { Text(label) }
-                                        }
-                                    }
-                                }
-                            }
-                            item {
-                                Text("Oppure scegli un'altra nota", style = MaterialTheme.typography.titleSmall,
-                                    modifier = Modifier.padding(top = 8.dp))
-                            }
-                        }
-                        item {
-                            AppCard(onClick = {
-                                scope.launch {
-                                    if (image != null) NotesRepo.addImageNote(applicationContext, image)
-                                    else NotesRepo.addTextNote(applicationContext, text)
-                                    done("Salvato in una nuova nota")
-                                }
-                            }) {
-                                Text("+ Nuova nota", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                        items(notes.filter { it.id != recent?.id }, key = { it.id }) { note ->
-                            AppCard(onClick = {
-                                scope.launch {
-                                    saveTo(note.id, null)
-                                    done("Salvato in \"${note.title}\"")
-                                }
-                            }) {
-                                Text(note.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(Transcript.date(note.createdAt), style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                        items(notes, key = { it.id }) { note ->
+                            NoteChoice(
+                                title = note.title,
+                                subtitle = Transcript.date(note.createdAt),
+                                badge = if (note.id == recentId) "Ultima inviata a Claude" else null,
+                                selected = noteId == note.id,
+                                onClick = { noteId = note.id },
+                            )
                         }
                     }
                 }
@@ -192,4 +260,51 @@ class ReceiveTextActivity : ComponentActivity() {
     private fun streamUri(i: Intent): Uri? =
         if (Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
         else i.getParcelableExtra(Intent.EXTRA_STREAM)
+}
+
+private const val NEW_NOTE = -1L
+
+private fun sectionLabel(kind: PromptKind) = when (kind) {
+    PromptKind.SUMMARY -> "Riassunto"
+    PromptKind.MINDMAP -> "Mappa"
+    PromptKind.INFOGRAPHIC -> "Infografica"
+    else -> kind.label
+}
+
+@Composable
+private fun StepTitle(n: String, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+        Box(
+            Modifier.size(24.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(n, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun NoteChoice(title: String, subtitle: String?, badge: String?, selected: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) cs.primaryContainer else cs.surfaceContainerLowest)
+            .border(2.dp, if (selected) cs.primary else Color.Transparent, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(Modifier.width(4.dp))
+        Column(Modifier.weight(1f)) {
+            if (badge != null) Text(badge, style = MaterialTheme.typography.labelSmall, color = cs.primary)
+            Text(title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                color = if (selected) cs.onPrimaryContainer else cs.onSurface)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        }
+    }
 }
