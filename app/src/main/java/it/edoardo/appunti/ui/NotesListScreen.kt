@@ -26,6 +26,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Description
@@ -35,6 +38,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -67,13 +71,19 @@ import it.edoardo.appunti.data.Note
 import it.edoardo.appunti.data.NotesRepo
 import it.edoardo.appunti.data.Status
 import it.edoardo.appunti.data.Transcript
+import it.edoardo.appunti.share.ClaudeShare
 import it.edoardo.appunti.whisper.Models
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Calendar
 
 @Composable
-fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
+fun NotesListScreen(
+    onOpen: (Long) -> Unit,
+    onSettings: () -> Unit,
+    onTasks: () -> Unit = {},
+    onOpenSearch: (Long, String) -> Unit = { id, _ -> onOpen(id) },
+) {
     val rec by RecorderService.state.collectAsStateWithLifecycle()
     if (rec !is RecState.Idle) {
         RecordingScreen(rec)
@@ -86,6 +96,11 @@ fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
 
     var query by rememberSaveable { mutableStateOf("") }
     var whatsappHelp by remember { mutableStateOf(false) }
+    // Domanda su più note: modalità di selezione.
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<Long>()) }
+    var multiQuestion by rememberSaveable { mutableStateOf("") }
+    val openTasks by remember { dao.observeAllTasks() }.collectAsStateWithLifecycle(initialValue = emptyList())
     val notesFlow = remember(query) { if (query.isBlank()) dao.observeAll() else dao.search(query.trim()) }
     val notes by notesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     // Ricalcolato a ogni ritorno sulla schermata (es. dopo le Impostazioni).
@@ -130,13 +145,74 @@ fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
                     Text(greeting(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("MeNoter", style = MaterialTheme.typography.headlineMedium)
                 }
+                IconButton(onClick = { selecting = !selecting; selected = emptySet() }) {
+                    Icon(
+                        Icons.Default.QuestionAnswer, contentDescription = "Chiedi a Claude su più note",
+                        tint = if (selecting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onTasks) {
+                    Icon(Icons.Default.Checklist, contentDescription = "Attività", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 IconButton(onClick = onSettings) {
                     Icon(Icons.Default.Settings, contentDescription = "Impostazioni", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
 
-        item {
+        if (selecting) item(key = "multi") {
+            MultiQuestionCard(
+                question = multiQuestion,
+                onQuestion = { multiQuestion = it },
+                count = selected.size,
+                onAll = { selected = notes.map { it.id }.toSet() },
+                onCancel = { selecting = false; selected = emptySet() },
+                onSend = {
+                    val chosen = notes.filter { it.id in selected }
+                    when {
+                        chosen.isEmpty() -> Toast.makeText(context, "Tocca le note su cui vuoi fare la domanda", Toast.LENGTH_SHORT).show()
+                        multiQuestion.isBlank() -> Toast.makeText(context, "Scrivi prima la domanda", Toast.LENGTH_SHORT).show()
+                        else -> scope.launch {
+                            val target = NotesRepo.addQuestionNote(context, multiQuestion, chosen.size)
+                            val chars = ClaudeShare.shareMulti(context, target, chosen, multiQuestion)
+                            if (chars > 500_000) Toast.makeText(
+                                context,
+                                "Testo molto lungo: Claude potrebbe non leggerlo tutto. Se serve, scegli meno note.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                            selecting = false
+                            selected = emptySet()
+                            multiQuestion = ""
+                            // Al ritorno da Claude si è già nella nota che raccoglie la risposta.
+                            onOpen(target)
+                        }
+                    }
+                },
+            )
+        }
+
+        if (!selecting && openTasks.any { !it.done }) item(key = "tasks") {
+            val pending = openTasks.filter { !it.done }
+            val overdue = pending.count { it.dueAt != null && it.dueAt < System.currentTimeMillis() }
+            AppCard(onClick = onTasks, padding = 14.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(Icons.Default.Checklist, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.secondary)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Attività da fare: ${pending.size}", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (overdue > 0) "$overdue scadute" else pending.first().text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (overdue > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (!selecting) item {
             HeroCard(
                 onRecord = { startRecording() },
                 onImport = { pickFile.launch(arrayOf("audio/*", "video/*", "application/ogg")) },
@@ -198,7 +274,14 @@ fun NotesListScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        items(notes, key = { it.id }) { note -> NoteCard(note) { onOpen(note.id) } }
+        items(notes, key = { it.id }) { note ->
+            if (selecting) {
+                val isSel = note.id in selected
+                NoteCard(note, selected = isSel) { selected = if (isSel) selected - note.id else selected + note.id }
+            } else {
+                NoteCard(note) { if (query.isBlank()) onOpen(note.id) else onOpenSearch(note.id, query.trim()) }
+            }
+        }
     }
 
     if (whatsappHelp) {
@@ -275,15 +358,20 @@ private fun HeroChip(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun NoteCard(note: Note, onClick: () -> Unit) {
+private fun NoteCard(note: Note, selected: Boolean? = null, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val (icon, container, tint) = when {
         note.audioPath == null -> Triple(Icons.Default.Description, cs.tertiaryContainer, cs.tertiary)
         File(note.audioPath).name.startsWith("rec-") -> Triple(Icons.Default.Mic, cs.primaryContainer, cs.primary)
         else -> Triple(Icons.Default.AudioFile, cs.secondaryContainer, cs.secondary)
     }
-    AppCard(onClick = onClick, padding = 14.dp) {
+    AppCard(
+        onClick = onClick,
+        padding = 14.dp,
+        color = if (selected == true) cs.primaryContainer else cs.surfaceContainerLowest,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (selected != null) Checkbox(checked = selected, onCheckedChange = { onClick() })
             IconBadge(icon, container, tint)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -322,5 +410,46 @@ fun StatusLine(note: Note) {
             Models.labelFor(note.modelName)?.let { StatusChip(it, cs.onSurfaceVariant) }
         }
         else -> Unit
+    }
+}
+
+/** Riquadro della domanda su più note: si scelgono le note toccandole nell'elenco. */
+@Composable
+private fun MultiQuestionCard(
+    question: String,
+    onQuestion: (String) -> Unit,
+    count: Int,
+    onAll: () -> Unit,
+    onCancel: () -> Unit,
+    onSend: () -> Unit,
+) {
+    AppCard(color = MaterialTheme.colorScheme.primaryContainer) {
+        Text("Chiedi a Claude su più note", style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer)
+        Text(
+            "Tocca le note da includere (scelte: $count). Claude riceve riassunti e trascrizioni in un unico file.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = question,
+            onValueChange = onQuestion,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Es.: cosa abbiamo deciso sul preventivo?") },
+            shape = RoundedCornerShape(20.dp),
+            maxLines = 4,
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+            ),
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GradientButton("Chiedi a Claude", Icons.AutoMirrored.Filled.Send, onSend)
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = onAll) { Text("Tutte") }
+            TextButton(onClick = onCancel) { Text("Annulla") }
+        }
     }
 }

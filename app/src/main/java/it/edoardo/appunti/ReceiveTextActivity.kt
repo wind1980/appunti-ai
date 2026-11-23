@@ -114,7 +114,8 @@ class ReceiveTextActivity : ComponentActivity() {
                     recentId = r?.id
                     noteId = r?.id
                     // Niente di inviato di recente e nessuna sezione nota: per un testo si propone "Altro".
-                    if (section == null && lastKind != null && lastKind != PromptKind.ASK && r != null) otherChosen = true
+                    val fromTemplate = prefs.template(prefs.lastSentKind) != null
+                    if (section == null && (fromTemplate || (lastKind != null && lastKind != PromptKind.ASK)) && r != null) otherChosen = true
                 }
                 val thumb = remember(image) {
                     try {
@@ -135,7 +136,9 @@ class ReceiveTextActivity : ComponentActivity() {
                     val chosenNote = noteId ?: return
                     saving = true
                     // "Altro": mantiene il tipo della richiesta (Azioni, Email…) se non è una delle tre sezioni.
+                    // Per i modelli personali si tiene il nome del modello.
                     val kind = section?.key ?: lastKind?.takeIf { it !in NotesRepo.SECTIONS && it != PromptKind.ASK }?.key
+                        ?: prefs.template(prefs.lastSentKind)?.key
                     scope.launch {
                         val id = if (chosenNote == NEW_NOTE) {
                             val title = if (image != null) "Grafica " + Transcript.date(System.currentTimeMillis())

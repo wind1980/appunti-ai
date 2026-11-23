@@ -1,6 +1,24 @@
-# MeNoter – versione 0.8
+# MeNoter – versione 0.10
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
+
+## Novità della 0.10 (funzioni prese da HiNoter)
+
+- **Interlocutori**: nuovo pulsante. Claude riscrive la trascrizione dividendola per chi parla (nomi veri se si capiscono, altrimenti "Persona 1, 2…"). Nella scheda Trascrizione si passa da "Con interlocutori" a "Originale"; il minuto di ogni intervento porta all'audio. Chi parla lo ricostruisce Claude dal contenuto, non dalla voce.
+- **Modelli**: nuovo pulsante con Riassunto breve / normale / dettagliato e i **modelli personali** (Impostazioni › Modelli personali: nome + comando per Claude; tre esempi pronti: Verbale, Appunti di lezione, Punti chiave). Il livello del pulsante "Riassunto" si sceglie nelle Impostazioni.
+- **Attività**: salvando la risposta "Azioni", le cose da fare diventano un elenco da spuntare in cima alla scheda "Altro", con responsabile e scadenza modificabili e il pulsante 📅 che apre il Calendario con il promemoria già compilato. Schermata **Attività** (icona in alto nella home) con le attività di tutte le note; in home un riquadro dice quante sono da fare e quante scadute.
+- **Domande su più note**: icona 💬 in alto nella home → tocca le note da includere (o "Tutte"), scrivi la domanda; Claude riceve un unico file con riassunti e trascrizioni. La risposta va in una nuova nota "Domanda su N note".
+- **Traduci in altre lingue**: il pulsante chiede la lingua (resta l'ultima scelta).
+- **Esporta in PDF o Word**: menu ⋮ della nota → "Esporta in PDF o Word…" (anche TXT e Markdown), scegliendo cosa includere. Resta anche "Salva nota completa (OneDrive…)".
+- **Ricerca nella trascrizione** con le parole evidenziate; aprendo una nota dalla ricerca della home, la trascrizione è già filtrata sulla parola cercata.
+
+Database versione 6 (nuova tabella delle attività): le note esistenti restano.
+
+Funzioni di HiNoter che restano fuori perché richiedono un server: partecipazione automatica alle riunioni del calendario, link YouTube, trascrizione in tempo reale nel cloud, Wear OS.
+
+## Novità della 0.9
+
+- Sezioni Riassunto / Mappa / Infografica con testo e immagine, nota completa su OneDrive, "Salva in MeNoter" in due passi (sezione e nota). (0.9.1)
 
 ## Novità della 0.8
 

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -50,6 +51,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import it.edoardo.appunti.app
 import it.edoardo.appunti.data.PromptKind
+import it.edoardo.appunti.data.SummaryLevel
+import it.edoardo.appunti.data.Template
 import it.edoardo.appunti.whisper.ModelState
 import it.edoardo.appunti.whisper.Models
 import it.edoardo.appunti.whisper.WhisperNative
@@ -298,6 +301,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
+                var level by remember { mutableStateOf(prefs.summaryLevel) }
+                Text("Livello del riassunto", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Quello del pulsante \"Riassunto\". Gli altri livelli sono sempre nel pulsante \"Modelli\" della nota.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SummaryLevel.entries.forEach { l ->
+                        Row(
+                            Modifier.selectable(selected = level == l, onClick = { level = l; prefs.summaryLevel = l }),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = level == l, onClick = { level = l; prefs.summaryLevel = l })
+                            Text(l.label)
+                        }
+                    }
+                }
+            }
+            item { HorizontalDivider() }
+            item { TemplatesEditor() }
+            item { HorizontalDivider() }
+            item {
                 Text("Prompt per Claude", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Il testo che accompagna la trascrizione per ogni pulsante.",
@@ -337,3 +362,89 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 }
+
+/** Modelli personali: un nome e il comando da mandare a Claude con la trascrizione. */
+@Composable
+private fun TemplatesEditor() {
+    val context = LocalContext.current
+    val prefs = context.app.prefs
+    var templates by remember { mutableStateOf(prefs.templates) }
+    var editing by remember { mutableStateOf<Int?>(null) } // -1 = nuovo
+    Column {
+        Text("Modelli personali", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Comandi tuoi per Claude (es. \"Verbale\", \"Appunti di lezione\", \"Colloquio\"). " +
+                "Li trovi nella nota, nel pulsante \"Modelli\".",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        templates.forEachIndexed { i, t ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(t.name, fontWeight = FontWeight.SemiBold)
+                    Text(t.prompt, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                }
+                TextButton(onClick = { editing = i }) { Text("Modifica") }
+            }
+        }
+        if (templates.isEmpty()) TextButton(onClick = {
+            templates = DEFAULT_TEMPLATES
+            prefs.templates = templates
+        }) { Text("Aggiungi i modelli di esempio") }
+        OutlinedButton(onClick = { editing = -1 }) { Text("Nuovo modello") }
+    }
+
+    editing?.let { index ->
+        val current = templates.getOrNull(index)
+        var name by remember(index) { mutableStateOf(current?.name ?: "") }
+        var prompt by remember(index) { mutableStateOf(current?.prompt ?: "") }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text(if (current == null) "Nuovo modello" else "Modifica modello") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = name, onValueChange = { name = it.take(30) }, label = { Text("Nome") }, singleLine = true)
+                    OutlinedTextField(
+                        value = prompt, onValueChange = { prompt = it }, label = { Text("Cosa deve fare Claude") },
+                        minLines = 5,
+                    )
+                    if (current != null) TextButton(onClick = {
+                        templates = templates.filterIndexed { i, _ -> i != index }
+                        prefs.templates = templates
+                        editing = null
+                    }) { Text("Elimina modello", color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = Template(name.trim(), prompt.trim())
+                    if (t.name.isNotEmpty() && t.prompt.isNotEmpty()) {
+                        templates = if (current == null) templates + t
+                        else templates.mapIndexed { i, old -> if (i == index) t else old }
+                        prefs.templates = templates
+                    }
+                    editing = null
+                }) { Text("Salva") }
+            },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text("Annulla") } },
+        )
+    }
+}
+
+private val DEFAULT_TEMPLATES = listOf(
+    Template(
+        "Verbale",
+        "Scrivi il verbale formale della riunione nella trascrizione qui sotto (o nel file allegato): data, " +
+            "partecipanti citati, ordine del giorno, discussione per punti, decisioni, azioni con responsabile e scadenza. " +
+            "Italiano formale, con titoli ed elenchi.",
+    ),
+    Template(
+        "Appunti di lezione",
+        "Trasforma la trascrizione di questa lezione (qui sotto o nel file allegato) in appunti di studio: concetti chiave " +
+            "con spiegazione breve, definizioni, esempi, formule o date importanti, e alla fine 5 domande di ripasso con risposta.",
+    ),
+    Template(
+        "Punti chiave",
+        "Elenca in 5-8 punti le informazioni più importanti della trascrizione qui sotto (o nel file allegato), " +
+            "una riga per punto, ognuna con il minuto [mm:ss].",
+    ),
+)
