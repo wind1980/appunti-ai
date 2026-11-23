@@ -10,15 +10,15 @@ Il progetto viene modificato da **più chat e da più PC**. L'unico punto comune
 ## Prima di iniziare
 1. Scarica sempre l'ultima versione di `main` (`git pull` o un clone nuovo) prima di toccare qualsiasi file.
 2. Leggi il README e l'ultimo commit di `main` per sapere a che versione è arrivata l'app.
-3. Controlla se esistono rami aperti (`git ls-remote origin`): se un ramo `anteprima`/di prova
-   è ancora aperto, chiedi a Edoardo se va unito o chiuso prima di lavorare sugli stessi file.
+3. Controlla se esistono rami o pull request aperti (`git ls-remote origin`): se ce n'è uno,
+   va unito a `main` o chiuso prima di lavorare sugli stessi file (chiedi a Edoardo).
 
 ## Durante il lavoro
-- Lavora direttamente su `main` per le modifiche normali. Usa un ramo separato solo se Edoardo
-  vuole provare qualcosa senza toccare la versione di tutti i giorni: il ramo pubblica una
-  release "Anteprima" con link fisso
-  (`https://github.com/wind1980/appunti-ai/releases/download/anteprima-NOMERAMO/AppuntiAI.apk`)
-  e va unito a `main` o chiuso appena possibile.
+- **Esiste una sola versione dell'app: quella su `main`.** Ogni sviluppo, da qualsiasi chat o PC,
+  parte dall'ultimo `main` e torna su `main`. Niente versioni parallele, niente anteprime separate.
+- Per verificare che compili prima di pubblicare si può usare un ramo temporaneo
+  (avvio manuale del workflow "Compila APK" su quel ramo: compila ma non pubblica). Appena la
+  build è verde il ramo si unisce a `main` (push diretto o pull request) e si elimina.
 - **Numeri di versione**: prima di assegnarne uno nuovo controlla `versionCode` e `versionName`
   in `app/build.gradle.kts` su `main` e usa il successivo. `versionCode` deve sempre crescere,
   altrimenti il telefono rifiuta l'aggiornamento.

@@ -1,6 +1,8 @@
 package it.edoardo.appunti.data
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 /** Prompt pronti da mandare a Claude insieme alla trascrizione. L'ordine è quello della barra nella nota. */
@@ -17,7 +19,10 @@ Comincia la risposta con una riga "# " seguita da un titolo breve per questa not
     ),
     ACTIONS(
         "actions", "Azioni",
-        """Dalla trascrizione qui sotto (o nel file allegato) estrai solo le cose da fare, come lista di caselle da spuntare ("- [ ] ..."). Per ognuna indica chi deve farla e la scadenza se vengono citate, e il minuto [mm:ss] in cui se ne parla. Raggruppale per persona. Rispondi in italiano."""
+        """Dalla trascrizione qui sotto (o nel file allegato) estrai solo le cose da fare.
+Scrivile come lista di caselle da spuntare, UNA PER RIGA, esattamente in questo formato:
+- [ ] cosa fare — Responsabile: Nome — Scadenza: gg/mm/aaaa — [mm:ss]
+Togli "Responsabile" o "Scadenza" se non vengono citati; [mm:ss] è il minuto in cui se ne parla. Non aggiungere titoli né altro testo. Rispondi in italiano."""
     ),
     MINDMAP(
         "mindmap", "Mappa",
@@ -35,11 +40,26 @@ Creala come FILE IMMAGINE PNG scaricabile (usa l'esecuzione del codice, per esem
     ),
     TRANSLATE(
         "translate", "Traduci",
-        """Traduci in inglese la trascrizione qui sotto (o nel file allegato), mantenendo i paragrafi e i minuti [mm:ss]. Correggi gli errori evidenti di trascrizione senza cambiare il senso."""
+        """Traduci in {lingua} la trascrizione qui sotto (o nel file allegato), mantenendo i paragrafi e i minuti [mm:ss]. Correggi gli errori evidenti di trascrizione senza cambiare il senso."""
     ),
     EMAIL(
         "email", "Email",
         """Scrivi una email di follow-up per i partecipanti a questa riunione (trascrizione qui sotto o nel file allegato): ringraziamento breve, punti principali discussi, decisioni, prossimi passi con responsabili e scadenze. Tono professionale ma cordiale, in italiano. Proponi anche l'oggetto."""
+    ),
+    SPEAKERS(
+        "speakers", "Interlocutori",
+        """La trascrizione qui sotto (o nel file allegato) è automatica e non indica chi parla. Riscrivila dividendola per interlocutore.
+- Riconosci i cambi di voce dal contenuto (domande e risposte, saluti, nomi usati, ruoli).
+- Usa i nomi veri quando si capiscono dal contesto, altrimenti "Persona 1", "Persona 2"…
+- Formato: un intervento per riga, esattamente così: [mm:ss] **Nome:** testo
+- Non riassumere e non saltare nulla: riporta tutto il testo, correggendo solo gli errori evidenti di trascrizione.
+- Se la trascrizione è troppo lunga per una sola risposta, fermati a fine intervento e scrivi "(continua)": ti chiederò il resto."""
+    ),
+    MULTI(
+        "multi", "Domanda su più note",
+        """Nel file allegato ci sono più note (trascrizioni di registrazioni, con eventuali riassunti), separate da righe "=== NOTA ... ===". Rispondi alla mia domanda usando solo il contenuto di queste note. Per ogni informazione indica da quale nota viene (titolo e data) e, se c'è, il minuto [mm:ss]. Se le note non contengono la risposta, dillo.
+
+Domanda: {domanda}"""
     ),
     ASK(
         "ask", "Domanda libera",
@@ -52,6 +72,33 @@ Domanda: {domanda}"""
         fun fromKey(key: String?): PromptKind? = entries.firstOrNull { it.key == key }
     }
 }
+
+/** Modello personale: un comando per Claude scritto dall'utente (es. "Verbale", "Lezione"). */
+data class Template(val name: String, val prompt: String) {
+    /** Chiave salvata con le risposte, per mostrare il nome del modello. */
+    val key: String get() = TEMPLATE_PREFIX + name
+
+    companion object {
+        const val TEMPLATE_PREFIX = "t:"
+    }
+}
+
+/** Livello di dettaglio del riassunto. */
+enum class SummaryLevel(val key: String, val label: String, val instruction: String) {
+    SHORT("short", "Breve", "Livello di dettaglio: BREVE. Il riassunto sta in 3-5 righe; per decisioni, azioni e domande solo i punti principali, massimo 3 per sezione."),
+    NORMAL("normal", "Normale", ""),
+    DETAILED("detailed", "Dettagliato", "Livello di dettaglio: DETTAGLIATO. Dopo il riassunto aggiungi un resoconto per argomento, con un titolo per ogni argomento discusso, i punti di vista emersi, numeri, nomi e date citati.");
+
+    companion object {
+        fun fromKey(key: String?): SummaryLevel = entries.firstOrNull { it.key == key } ?: NORMAL
+    }
+}
+
+/** Lingue proposte da "Traduci". */
+val TRANSLATE_LANGUAGES = listOf(
+    "inglese", "italiano", "francese", "spagnolo", "tedesco", "portoghese",
+    "olandese", "polacco", "rumeno", "russo", "arabo", "cinese", "giapponese",
+)
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("appunti", Context.MODE_PRIVATE)
@@ -119,6 +166,36 @@ class Prefs(context: Context) {
     var handledClipHash: Int
         get() = sp.getInt("handled_clip", 0)
         set(v) = sp.edit().putInt("handled_clip", v).apply()
+
+    /** Livello di dettaglio del pulsante "Riassunto". */
+    var summaryLevel: SummaryLevel
+        get() = SummaryLevel.fromKey(sp.getString("summary_level", null))
+        set(v) = sp.edit().putString("summary_level", v.key).apply()
+
+    /** Lingua di arrivo di "Traduci" (l'ultima scelta). */
+    var translateTarget: String
+        get() = sp.getString("translate_target", "inglese") ?: "inglese"
+        set(v) = sp.edit().putString("translate_target", v).apply()
+
+    /** Modelli personali, nell'ordine in cui compaiono. */
+    var templates: List<Template>
+        get() = try {
+            val arr = JSONArray(sp.getString("templates", "[]"))
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Template(o.getString("name"), o.getString("prompt"))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        set(v) {
+            val arr = JSONArray()
+            v.forEach { arr.put(JSONObject().put("name", it.name).put("prompt", it.prompt)) }
+            sp.edit().putString("templates", arr.toString()).apply()
+        }
+
+    fun template(key: String?): Template? =
+        key?.takeIf { it.startsWith(Template.TEMPLATE_PREFIX) }?.let { k -> templates.firstOrNull { it.key == k } }
 
     fun prompt(kind: PromptKind): String = sp.getString("prompt_${kind.key}", null) ?: kind.default
 

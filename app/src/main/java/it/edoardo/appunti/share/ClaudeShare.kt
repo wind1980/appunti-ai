@@ -12,7 +12,11 @@ import androidx.core.content.getSystemService
 import it.edoardo.appunti.ReceiveTextActivity
 import it.edoardo.appunti.app
 import it.edoardo.appunti.data.Note
+import it.edoardo.appunti.data.KIND_IMAGE
+import it.edoardo.appunti.data.KIND_PDF
 import it.edoardo.appunti.data.PromptKind
+import it.edoardo.appunti.data.SummaryLevel
+import it.edoardo.appunti.data.Template
 import it.edoardo.appunti.data.Transcript
 import java.io.File
 
@@ -31,54 +35,121 @@ object ClaudeShare {
         "Rispondi solo con il contenuto richiesto: niente frasi introduttive, niente commenti, " +
             "proposte o domande alla fine."
 
-    /** Prompt completo per un tipo di richiesta (con la domanda, per [PromptKind.ASK]). */
+    /** Prompt completo per un tipo di richiesta (con la domanda, per [PromptKind.ASK] e [PromptKind.MULTI]). */
     fun fullPrompt(context: Context, kind: PromptKind, question: String? = null): String {
-        var prompt = context.app.prefs.prompt(kind)
+        val prefs = context.app.prefs
+        var prompt = prefs.prompt(kind)
         if (question != null) {
             prompt = if (prompt.contains("{domanda}")) prompt.replace("{domanda}", question.trim())
             else "$prompt\n\nDomanda: ${question.trim()}"
         }
-        return if (kind == PromptKind.ASK) prompt else "$prompt\n$NO_CHATTER"
+        if (kind == PromptKind.TRANSLATE) {
+            val lang = prefs.translateTarget
+            prompt = if (prompt.contains("{lingua}")) prompt.replace("{lingua}", lang)
+            else "$prompt\n\nLingua di arrivo: $lang."
+        }
+        if (kind == PromptKind.SUMMARY) {
+            prefs.summaryLevel.instruction.takeIf { it.isNotEmpty() }?.let { prompt = "$prompt\n$it" }
+        }
+        return if (kind == PromptKind.ASK || kind == PromptKind.MULTI) prompt else "$prompt\n$NO_CHATTER"
     }
 
-    private fun remember(context: Context, note: Note, kind: PromptKind) {
+    private fun remember(context: Context, noteId: Long, kindKey: String) {
         val prefs = context.app.prefs
-        prefs.lastSentNoteId = note.id
-        prefs.lastSentKind = kind.key
+        prefs.lastSentNoteId = noteId
+        prefs.lastSentKind = kindKey
         prefs.lastSentAt = System.currentTimeMillis()
     }
 
     /** Nuova chat in Claude con richiesta + trascrizione. */
     fun share(context: Context, note: Note, kind: PromptKind, question: String? = null) {
+        val label = if (kind == PromptKind.TRANSLATE) "Traduzione in ${context.app.prefs.translateTarget}" else kind.label
+        send(context, note, label, fullPrompt(context, kind, question), kind.key)
+    }
+
+    /** Nuova chat in Claude con un modello personale + trascrizione. */
+    fun shareTemplate(context: Context, note: Note, template: Template) {
+        send(context, note, template.name, "${template.prompt.trim()}\n$NO_CHATTER", template.key)
+    }
+
+    /** Riassunto con un livello di dettaglio diverso da quello scelto nelle Impostazioni. */
+    fun shareSummary(context: Context, note: Note, level: SummaryLevel) {
+        var prompt = context.app.prefs.prompt(PromptKind.SUMMARY)
+        if (level.instruction.isNotEmpty()) prompt = "$prompt\n${level.instruction}"
+        send(context, note, "Riassunto ${level.label.lowercase()}", "$prompt\n$NO_CHATTER", PromptKind.SUMMARY.key)
+    }
+
+    private fun send(context: Context, note: Note, label: String, prompt: String, kindKey: String) {
         val prefs = context.app.prefs
         val transcript = Transcript.readable(note)
-        val prompt = fullPrompt(context, kind, question)
         val header = "${note.title} – ${Transcript.date(note.createdAt)}"
         val asFile = prefs.alwaysAsFile || transcript.length > MAX_INLINE_CHARS
-
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, note.title)
-            if (asFile) {
-                // L'app Claude scarta il testo del messaggio quando c'è un allegato:
-                // il comando va quindi in cima al file, prima della trascrizione.
-                val body = "RICHIESTA PER CLAUDE – ${kind.label.uppercase()}\n\n$prompt\n\n" +
-                    "==========\nTRASCRIZIONE – $header\n\n$transcript"
-                val file = writeTxt(context, "${kind.label} - ${note.title}", body)
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                putExtra(Intent.EXTRA_STREAM, uri)
-                // Se un giorno l'app Claude userà anche il messaggio, arriverà questo.
-                putExtra(Intent.EXTRA_TEXT, "Segui la richiesta scritta all'inizio del file allegato.")
-                clipData = ClipData.newUri(context.contentResolver, file.name, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } else {
+        val intent = if (asFile) {
+            // L'app Claude scarta il testo del messaggio quando c'è un allegato:
+            // il comando va quindi in cima al file, prima della trascrizione.
+            val body = "RICHIESTA PER CLAUDE – ${label.uppercase()}\n\n$prompt\n\n" +
+                "==========\nTRASCRIZIONE – $header\n\n$transcript"
+            fileIntent(context, "$label - ${note.title}", body, note.title)
+        } else {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, note.title)
                 putExtra(Intent.EXTRA_TEXT, "$prompt\n\n---\nTRASCRIZIONE – $header\n\n$transcript")
             }
-            // Claude si apre nella sua finestra: la chat resta aperta lì e si può riprendere.
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        remember(context, note.id, kindKey)
+        open(context, intent)
+    }
 
-        remember(context, note, kind)
+    /**
+     * Domanda su più note: crea il testo con tutte le note scelte (riassunto più recente + trascrizione)
+     * e lo manda a Claude come file. [targetNoteId] è la nota in cui salvare la risposta.
+     * Restituisce il numero di caratteri inviati.
+     */
+    suspend fun shareMulti(context: Context, targetNoteId: Long, notes: List<Note>, question: String): Int {
+        val dao = context.app.db.notes()
+        val prompt = fullPrompt(context, PromptKind.MULTI, question)
+        val body = buildString {
+            append("RICHIESTA PER CLAUDE – DOMANDA SU ${notes.size} NOTE\n\n").append(prompt).append("\n\n")
+            for (n in notes) {
+                append("=== NOTA: ").append(n.title).append(" – ").append(Transcript.date(n.createdAt)).append(" ===\n\n")
+                dao.latestResponse(n.id, PromptKind.SUMMARY.key)?.let {
+                    append("RIASSUNTO:\n").append(it.trim()).append("\n\n")
+                }
+                val transcript = Transcript.readable(n)
+                if (transcript.isNotBlank()) {
+                    append("TRASCRIZIONE:\n").append(transcript).append("\n\n")
+                } else {
+                    // Nota di solo testo: si mandano le risposte salvate.
+                    dao.responsesOf(n.id).filter { it.kind != KIND_IMAGE && it.kind != KIND_PDF }.forEach {
+                        append(it.text.trim()).append("\n\n")
+                    }
+                }
+            }
+        }
+        val intent = fileIntent(context, "Domanda su ${notes.size} note", body, "Domanda su ${notes.size} note")
+        remember(context, targetNoteId, PromptKind.MULTI.key)
+        open(context, intent)
+        return body.length
+    }
+
+    private fun fileIntent(context: Context, fileName: String, body: String, subject: String): Intent {
+        val file = writeTxt(context, fileName, body)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        return Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            // Se un giorno l'app Claude userà anche il messaggio, arriverà questo.
+            putExtra(Intent.EXTRA_TEXT, "Segui la richiesta scritta all'inizio del file allegato.")
+            clipData = ClipData.newUri(context.contentResolver, file.name, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    private fun open(context: Context, intent: Intent) {
+        // Claude si apre nella sua finestra: la chat resta aperta lì e si può riprendere.
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             context.startActivity(Intent(intent).setPackage(CLAUDE_PACKAGE))
         } catch (e: ActivityNotFoundException) {

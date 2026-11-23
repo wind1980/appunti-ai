@@ -14,8 +14,8 @@ android {
         applicationId = "it.edoardo.appunti"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.9.1"
+        versionCode = 14
+        versionName = "0.10.0"
 
         ndk {
             // Telefoni Android moderni (64 bit ARM). Aggiungi "x86_64" per l'emulatore.

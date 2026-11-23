@@ -24,6 +24,7 @@ import it.edoardo.appunti.ui.AppuntiTheme
 import it.edoardo.appunti.ui.NoteScreen
 import it.edoardo.appunti.ui.NotesListScreen
 import it.edoardo.appunti.ui.SettingsScreen
+import it.edoardo.appunti.ui.TasksScreen
 import it.edoardo.appunti.ui.ViewerScreen
 import kotlinx.coroutines.launch
 
@@ -59,14 +60,20 @@ class MainActivity : ComponentActivity() {
                         NotesListScreen(
                             onOpen = { id -> nav.navigate("note/$id") },
                             onSettings = { nav.navigate("settings") },
+                            onTasks = { nav.navigate("tasks") },
+                            onOpenSearch = { id, q -> nav.navigate("note/$id?q=${Uri.encode(q)}") },
                         )
                     }
                     composable(
-                        "note/{id}",
-                        arguments = listOf(navArgument("id") { type = NavType.LongType }),
+                        "note/{id}?q={q}",
+                        arguments = listOf(
+                            navArgument("id") { type = NavType.LongType },
+                            navArgument("q") { type = NavType.StringType; defaultValue = "" },
+                        ),
                     ) { entry ->
                         NoteScreen(
                             id = entry.arguments?.getLong("id") ?: 0L,
+                            initialQuery = entry.arguments?.getString("q") ?: "",
                             onBack = { nav.popBackStack() },
                             onSettings = { nav.navigate("settings") },
                             onOpenResponse = { rid -> nav.navigate("view/$rid") },
@@ -84,6 +91,12 @@ class MainActivity : ComponentActivity() {
                             responseId = entry.arguments?.getLong("rid") ?: 0L,
                             forceMap = entry.arguments?.getBoolean("map") ?: false,
                             onBack = { nav.popBackStack() },
+                        )
+                    }
+                    composable("tasks") {
+                        TasksScreen(
+                            onBack = { nav.popBackStack() },
+                            onOpenNote = { id -> nav.navigate("note/$id") },
                         )
                     }
                     composable("settings") {

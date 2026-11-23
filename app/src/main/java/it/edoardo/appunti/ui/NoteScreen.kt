@@ -47,6 +47,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -109,6 +112,10 @@ import it.edoardo.appunti.data.Note
 import it.edoardo.appunti.data.NotesRepo
 import it.edoardo.appunti.data.PromptKind
 import it.edoardo.appunti.data.Status
+import it.edoardo.appunti.data.SummaryLevel
+import it.edoardo.appunti.data.TaskItem
+import it.edoardo.appunti.data.Template
+import it.edoardo.appunti.data.TRANSLATE_LANGUAGES
 import it.edoardo.appunti.data.Transcript
 import it.edoardo.appunti.share.ClaudeShare
 import it.edoardo.appunti.whisper.Models
@@ -118,7 +125,8 @@ import java.io.File
 
 /** Azioni della barra Claude, nell'ordine in cui compaiono. */
 private val BAR_ACTIONS = listOf(
-    PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC, PromptKind.TRANSLATE, PromptKind.EMAIL,
+    PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.SPEAKERS, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC,
+    PromptKind.TRANSLATE, PromptKind.EMAIL,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -129,6 +137,7 @@ fun NoteScreen(
     onSettings: () -> Unit,
     onOpenResponse: (Long) -> Unit,
     onOpenMap: (Long) -> Unit,
+    initialQuery: String = "",
 ) {
     val context = LocalContext.current
     val dao = context.app.db.notes()
@@ -136,6 +145,13 @@ fun NoteScreen(
 
     val note by remember(id) { dao.observe(id) }.collectAsStateWithLifecycle(initialValue = null)
     val responses by remember(id) { dao.observeResponses(id) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val tasks by remember(id) { dao.observeTasks(id) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    // Ricerca nella trascrizione (arriva già compilata se la nota è stata aperta dalla ricerca nell'elenco).
+    var transcriptQuery by rememberSaveable { mutableStateOf(initialQuery) }
+    var showSpeakers by rememberSaveable { mutableStateOf(true) }
+    var editingTask by remember { mutableStateOf<TaskItem?>(null) }
+    var addingTask by remember { mutableStateOf(false) }
+    var docExporting by remember { mutableStateOf(false) }
     val n = note ?: run {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         return
@@ -146,9 +162,13 @@ fun NoteScreen(
     // Schede: Riassunto, Mappa, Infografica, Altro, Trascrizione.
     // Si apre sulla trascrizione finché non ci sono risposte.
     var tab by rememberSaveable { mutableIntStateOf(-1) }
-    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty()) TAB_TEXT else
+    val selectedTab = if (tab >= 0) tab else if (responses.isEmpty() || initialQuery.isNotBlank()) TAB_TEXT else
         NotesRepo.SECTIONS.indexOfFirst { k -> responses.any { sectionOf(it) == k } }.takeIf { it >= 0 } ?: TAB_OTHER
-    val otherResponses = responses.filter { sectionOf(it) == null }
+    // La trascrizione divisa per interlocutore si vede nella scheda Trascrizione;
+    // se Claude l'ha divisa in più risposte ("continua"), si uniscono in ordine.
+    val speakerParts = responses.filter { it.kind == PromptKind.SPEAKERS.key }.sortedBy { it.createdAt }
+    val speakersText = speakerParts.takeIf { it.isNotEmpty() }?.joinToString("\n") { it.text }
+    val otherResponses = responses.filter { sectionOf(it) == null && it.kind != PromptKind.SPEAKERS.key }
     // Immagine o PDF scelto dal telefono: va nella sezione da cui lo si è chiesto (null = Altro).
     var fileKind by rememberSaveable { mutableStateOf<String?>(null) }
     val addFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -209,15 +229,40 @@ fun NoteScreen(
         tab = tabFor(kind)
     }
 
+    /** Modello personale (va in "Altro"). */
+    fun sendTemplate(t: Template) {
+        if (!hasText) {
+            Toast.makeText(context, "La trascrizione non è ancora pronta", Toast.LENGTH_SHORT).show()
+            return
+        }
+        ClaudeShare.shareTemplate(context, n, t)
+        tab = TAB_OTHER
+    }
+
+    /** Riassunto breve, normale o dettagliato (va in "Riassunto"). */
+    fun sendSummary(level: SummaryLevel) {
+        if (!hasText) {
+            Toast.makeText(context, "La trascrizione non è ancora pronta", Toast.LENGTH_SHORT).show()
+            return
+        }
+        ClaudeShare.shareSummary(context, n, level)
+        tab = tabFor(PromptKind.SUMMARY)
+    }
+
     var pasteMenu by remember { mutableStateOf(false) }
 
     /** Salva un testo copiato da Claude con il tipo scelto (null = testo normale). */
-    fun saveAs(text: String, kind: PromptKind?, explicit: Boolean = false) {
+    fun saveAs(text: String, kind: PromptKind?, explicit: Boolean = false, kindKey: String? = kind?.key) {
         scope.launch {
-            val saved = PromptKind.fromKey(NotesRepo.saveResponse(context, n.id, text, kind?.key, explicit))
+            val savedKey = NotesRepo.saveResponse(context, n.id, text, kindKey, explicit)
+            val saved = PromptKind.fromKey(savedKey)
             clip = null
             tab = tabFor(saved)
-            Toast.makeText(context, "Testo salvato" + (saved?.let { " in ${sectionLabel(it)}" } ?: ""), Toast.LENGTH_SHORT).show()
+            val where = saved?.let { sectionLabel(it) } ?: prefs.template(savedKey)?.name?.let { "Altro ($it)" }
+            Toast.makeText(context, "Testo salvato" + (where?.let { " in $it" } ?: ""), Toast.LENGTH_SHORT).show()
+            if (saved == PromptKind.ACTIONS) {
+                Toast.makeText(context, "Le attività sono in cima ad \"Altro\": spuntale o aggiungi un promemoria", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -297,6 +342,11 @@ fun NoteScreen(
                             leadingIcon = { Icon(Icons.Default.CloudUpload, contentDescription = null) },
                             onClick = { menu = false; exporting = true },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Esporta in PDF o Word…") },
+                            leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                            onClick = { menu = false; docExporting = true },
+                        )
                         if (hasText) {
                             DropdownMenuItem(
                                 text = { Text("Copia trascrizione") },
@@ -338,6 +388,9 @@ fun NoteScreen(
                 player = player,
                 onAction = { send(it) },
                 onAsk = { q -> send(PromptKind.ASK, q) },
+                onTemplate = { sendTemplate(it) },
+                onSummaryLevel = { sendSummary(it) },
+                onManageTemplates = onSettings,
             )
         },
     ) { padding ->
@@ -376,9 +429,12 @@ fun NoteScreen(
                     ClipboardProposal(
                         raw = text,
                         kind = PromptKind.fromKey(prefs.lastSentKind),
+                        templateName = prefs.template(prefs.lastSentKind)?.name,
                         // L'infografica viene riconosciuta da sola se c'è il codice HTML.
                         onSave = {
-                            saveAs(text, PromptKind.fromKey(prefs.lastSentKind)?.takeIf { it != PromptKind.ASK })
+                            val last = prefs.lastSentKind
+                            val k = PromptKind.fromKey(last)?.takeIf { it != PromptKind.ASK && it != PromptKind.MULTI }
+                            saveAs(text, k, kindKey = k?.key ?: prefs.template(last)?.key)
                         },
                         onSaveAs = { kind -> saveAs(text, kind) },
                         onIgnore = {
@@ -412,6 +468,10 @@ fun NoteScreen(
                     VisualCard(n, r, onOpen = { onOpenResponse(r.id) }, onOpenMap = { onOpenMap(r.id) })
                 }
             } else if (selectedTab == TAB_OTHER) {
+                // Attività (dalla risposta "Azioni" o aggiunte a mano) in cima.
+                if (tasks.isNotEmpty()) item(key = "tasks") {
+                    TasksSection(n, tasks, onAdd = { addingTask = true }, onEdit = { editingTask = it })
+                }
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -439,6 +499,13 @@ fun NoteScreen(
                         Text("Aggiungi immagine o PDF dal telefono")
                     }
                 }
+                if (tasks.isEmpty()) item {
+                    TextButton(onClick = { addingTask = true }) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Aggiungi un'attività")
+                    }
+                }
                 if (otherResponses.isEmpty()) item {
                     Text(
                         "Qui finiscono le altre risposte di Claude (Azioni, Traduci, Email, domande libere).",
@@ -457,21 +524,64 @@ fun NoteScreen(
                         modifier = Modifier.padding(vertical = 12.dp),
                     )
                 }
-                items(paragraphs.size) { i ->
-                    val p = paragraphs[i]
-                    Column {
-                        Text(
-                            Transcript.time(p.startMs),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                .let { m -> if (player != null) m.clickable { player.seekAndPlay(p.startMs) } else m }
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        SelectionContainer { Text(p.text, style = MaterialTheme.typography.bodyLarge) }
+                val q = transcriptQuery.trim()
+                val turns = if (speakersText != null && showSpeakers) parseTurns(speakersText) else null
+                if (hasText) item(key = "search") {
+                    val matches = when {
+                        q.isEmpty() -> 0
+                        turns != null -> turns.count { it.text.contains(q, ignoreCase = true) }
+                        else -> paragraphs.count { it.text.contains(q, ignoreCase = true) }
+                    }
+                    TranscriptSearchField(transcriptQuery, matches) { transcriptQuery = it }
+                }
+                if (speakersText != null) item(key = "speakers-toggle") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            SegmentedTabs(
+                                labels = listOf("Con interlocutori", "Originale"),
+                                selected = if (showSpeakers) 0 else 1,
+                                onSelect = { showSpeakers = it == 0 },
+                            )
+                        }
+                        if (showSpeakers) IconButton(onClick = { scope.launch { speakerParts.forEach { NotesRepo.deleteResponse(context, it) } } }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Elimina la versione con interlocutori",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (turns != null) {
+                    val speakerIndex = turns.mapNotNull { it.speaker }.distinct().withIndex().associate { it.value to it.index }
+                    val shown = if (q.isEmpty()) turns else turns.filter { it.text.contains(q, ignoreCase = true) }
+                    items(shown.size, key = { "t$it" }) { i ->
+                        val t = shown[i]
+                        SpeakerTurn(t, speakerIndex[t.speaker] ?: 0, q, player?.let { pl -> { ms: Long -> pl.seekAndPlay(ms) } })
+                    }
+                } else {
+                    val shown = if (q.isEmpty()) paragraphs else paragraphs.filter { it.text.contains(q, ignoreCase = true) }
+                    if (q.isNotEmpty() && shown.isEmpty()) item {
+                        Text("Nessun risultato per \"$q\".", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    items(shown.size) { i ->
+                        val p = shown[i]
+                        Column {
+                            Text(
+                                Transcript.time(p.startMs),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .let { m -> if (player != null) m.clickable { player.seekAndPlay(p.startMs) } else m }
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            SelectionContainer {
+                                Text(
+                                    highlight(p.text, q, MaterialTheme.colorScheme.tertiaryContainer),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -479,6 +589,13 @@ fun NoteScreen(
     }
 
     if (exporting) ExportDialog(n, responses, onDismiss = { exporting = false })
+    if (docExporting) DocumentExportDialog(n) { docExporting = false }
+    if (addingTask || editingTask != null) {
+        TaskEditDialog(n.id, editingTask) {
+            addingTask = false
+            editingTask = null
+        }
+    }
 
     if (renaming) {
         var title by remember { mutableStateOf(n.title) }
@@ -522,12 +639,13 @@ private fun sectionOf(r: ClaudeResponse): PromptKind? =
     PromptKind.fromKey(r.kind)?.takeIf { it in NotesRepo.SECTIONS }
 
 private fun tabFor(kind: PromptKind?): Int =
-    NotesRepo.SECTIONS.indexOf(kind).takeIf { it >= 0 } ?: TAB_OTHER
+    if (kind == PromptKind.SPEAKERS) TAB_TEXT else NotesRepo.SECTIONS.indexOf(kind).takeIf { it >= 0 } ?: TAB_OTHER
 
 private fun sectionLabel(kind: PromptKind) = when (kind) {
     PromptKind.SUMMARY -> "Riassunto"
     PromptKind.MINDMAP -> "Mappa"
     PromptKind.INFOGRAPHIC -> "Infografica"
+    PromptKind.SPEAKERS -> "Trascrizione (con interlocutori)"
     else -> "Altro"
 }
 
@@ -688,6 +806,7 @@ private fun readClipboard(context: Context): String? =
 private fun ClipboardProposal(
     raw: String,
     kind: PromptKind?,
+    templateName: String?,
     onSave: () -> Unit,
     onSaveAs: (PromptKind?) -> Unit,
     onIgnore: () -> Unit,
@@ -710,7 +829,9 @@ private fun ClipboardProposal(
             GradientButton(
                 when {
                     cleaned.isHtml -> "Salva infografica"
-                    kind != null && kind != PromptKind.ASK -> "Salva in ${if (kind in NotesRepo.SECTIONS) sectionLabel(kind) else typeLabel(kind)}"
+                    kind != null && kind != PromptKind.ASK && kind != PromptKind.MULTI ->
+                        "Salva in ${if (kind in NotesRepo.SECTIONS || kind == PromptKind.SPEAKERS) sectionLabel(kind) else typeLabel(kind)}"
+                    templateName != null -> "Salva come $templateName"
                     else -> "Salva nella nota"
                 },
                 Icons.Default.ContentPaste, onSave,
@@ -732,12 +853,13 @@ private fun ClipboardProposal(
 private fun typeLabel(kind: PromptKind) = when (kind) {
     PromptKind.MINDMAP -> "mappa concettuale"
     PromptKind.INFOGRAPHIC -> "infografica"
+    PromptKind.SPEAKERS -> "trascrizione con interlocutori"
     else -> kind.label.lowercase()
 }
 
 /** Tipi tra cui scegliere quando si incolla una risposta di Claude (null = testo normale). */
 private val PASTE_KINDS = listOf(
-    PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC, PromptKind.TRANSLATE, PromptKind.EMAIL,
+    PromptKind.SUMMARY, PromptKind.ACTIONS, PromptKind.SPEAKERS, PromptKind.MINDMAP, PromptKind.INFOGRAPHIC, PromptKind.TRANSLATE, PromptKind.EMAIL,
 )
 
 @Composable
@@ -765,9 +887,15 @@ private fun ClaudeBar(
     player: Player?,
     onAction: (PromptKind) -> Unit,
     onAsk: (question: String) -> Unit,
+    onTemplate: (Template) -> Unit,
+    onSummaryLevel: (SummaryLevel) -> Unit,
+    onManageTemplates: () -> Unit,
 ) {
     val context = LocalContext.current
+    val prefs = context.app.prefs
     var question by rememberSaveable { mutableStateOf("") }
+    var langMenu by remember { mutableStateOf(false) }
+    var templatesMenu by remember { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         shadowElevation = 12.dp,
@@ -788,7 +916,56 @@ private fun ClaudeBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 BAR_ACTIONS.forEach { kind ->
-                    ActionTile(kind.icon(), kind.label, enabled) { onAction(kind) }
+                    if (kind == PromptKind.TRANSLATE) {
+                        // Traduci: prima si sceglie la lingua (resta l'ultima usata).
+                        Box {
+                            ActionTile(kind.icon(), kind.label, enabled) { langMenu = true }
+                            DropdownMenu(expanded = langMenu, onDismissRequest = { langMenu = false }) {
+                                TRANSLATE_LANGUAGES.forEach { lang ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                lang.replaceFirstChar { it.uppercase() } +
+                                                    if (lang == prefs.translateTarget) "  ✓" else "",
+                                            )
+                                        },
+                                        onClick = {
+                                            langMenu = false
+                                            prefs.translateTarget = lang
+                                            onAction(kind)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        ActionTile(kind.icon(), kind.label, enabled) { onAction(kind) }
+                    }
+                }
+                // Modelli: riassunto breve, normale o dettagliato e i modelli personali.
+                Box {
+                    ActionTile(Icons.Default.LibraryBooks, "Modelli", enabled) { templatesMenu = true }
+                    DropdownMenu(expanded = templatesMenu, onDismissRequest = { templatesMenu = false }) {
+                        SummaryLevel.entries.forEach { level ->
+                            DropdownMenuItem(
+                                text = { Text("Riassunto ${level.label.lowercase()}") },
+                                leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                                onClick = { templatesMenu = false; onSummaryLevel(level) },
+                            )
+                        }
+                        prefs.templates.forEach { t ->
+                            DropdownMenuItem(
+                                text = { Text(t.name) },
+                                leadingIcon = { Icon(Icons.Default.LibraryBooks, contentDescription = null) },
+                                onClick = { templatesMenu = false; onTemplate(t) },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Crea o modifica modelli…") },
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            onClick = { templatesMenu = false; onManageTemplates() },
+                        )
+                    }
                 }
             }
             Row(
@@ -1140,7 +1317,9 @@ private fun ResponseCard(note: Note, r: ClaudeResponse, onOpen: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-            PromptKind.fromKey(r.kind)?.let { StatusChip(it.label, MaterialTheme.colorScheme.primary) }
+            val chip = PromptKind.fromKey(r.kind)?.label
+                ?: r.kind?.takeIf { it.startsWith(Template.TEMPLATE_PREFIX) }?.removePrefix(Template.TEMPLATE_PREFIX)
+            chip?.let { StatusChip(it, MaterialTheme.colorScheme.primary) }
         }
         Spacer(Modifier.height(10.dp))
         when (view) {
