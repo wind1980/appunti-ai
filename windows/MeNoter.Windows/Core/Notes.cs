@@ -39,6 +39,8 @@ public class Note
     public string MicPath => Path.Combine(Folder, "io.wav");
     public string SysPath => Path.Combine(Folder, "altri.wav");
     public string TranscriptPath => Path.Combine(Folder, "trascrizione.txt");
+    public string PreviousTranscriptPath => Path.Combine(Folder, "trascrizione-precedente.txt");
+    public string LogPath => Path.Combine(Folder, "trascrizione-log.txt");
     public string ResponsesDir => Path.Combine(Folder, "risposte");
     public string RequestsDir => Path.Combine(Folder, "per-claude");
 
@@ -57,16 +59,29 @@ public class Note
         if (m != null) Meta = m;
     }
 
-    /// <summary>Risposte di Claude salvate (file .md), dalla più vecchia.</summary>
+    public static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp" };
+
+    /// <summary>Risposte di Claude salvate (testi .md e immagini), dalla più vecchia.</summary>
     public List<string> Responses() =>
         Directory.Exists(ResponsesDir)
-            ? Directory.GetFiles(ResponsesDir, "*.md").OrderBy(f => File.GetCreationTime(f)).ToList()
+            ? Directory.GetFiles(ResponsesDir)
+                .Where(f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || IsImage(f))
+                .OrderBy(f => File.GetCreationTime(f)).ToList()
             : new List<string>();
+
+    public static bool IsImage(string path) =>
+        ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+
+    /// <summary>Nome libero per una nuova risposta (testo o immagine) con l'etichetta della richiesta.</summary>
+    public string NewResponsePath(string label, string extension)
+    {
+        Directory.CreateDirectory(ResponsesDir);
+        return Path.Combine(ResponsesDir, $"{NoteStore.Safe(label)} {DateTime.Now:yyyy-MM-dd HH.mm.ss}{extension}");
+    }
 
     public string SaveResponse(string label, string text)
     {
-        Directory.CreateDirectory(ResponsesDir);
-        var path = Path.Combine(ResponsesDir, $"{NoteStore.Safe(label)} {DateTime.Now:yyyy-MM-dd HH.mm.ss}.md");
+        var path = NewResponsePath(label, ".md");
         File.WriteAllText(path, text.Trim() + Environment.NewLine);
         return path;
     }

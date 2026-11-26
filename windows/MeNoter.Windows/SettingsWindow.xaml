@@ -21,6 +21,9 @@
         <ComboBox x:Name="LanguageBox" Margin="0,0,0,16"/>
 
         <CheckBox x:Name="AutoBox" Content="Trascrivi subito quando finisce la registrazione" Margin="0,0,0,8"/>
+        <CheckBox x:Name="SkipBox" Content="Trascrivi solo i tratti con voce (più veloce)" Margin="0,0,0,2"/>
+        <TextBlock Style="{StaticResource Hint}" Margin="24,0,0,10"
+                   Text="Se in una trascrizione manca del testo, toglilo e premi di nuovo Trascrivi."/>
         <CheckBox x:Name="DesktopBox" Content="Apri l'app Claude per desktop (se no, claude.ai nel browser)" Margin="0,0,0,8"/>
         <CheckBox x:Name="PasteBox" Content="Incolla da sola la richiesta in Claude (poi premi tu Invio)" Margin="0,0,0,20"/>
 

@@ -31,6 +31,14 @@ public static class AutoPaste
         return true;
     }
 
+    /// <summary>Secondo Ctrl+V, se Claude è ancora la finestra in primo piano.</summary>
+    public static Task<bool> PasteAgainAsync()
+    {
+        if (!IsClaude(GetForegroundWindow())) return Task.FromResult(false);
+        PressCtrlV();
+        return Task.FromResult(true);
+    }
+
     private static IntPtr FindClaudeWindow()
     {
         foreach (var p in Process.GetProcessesByName("claude"))
