@@ -1,6 +1,34 @@
-# MeNoter – versione 0.10
+# MeNoter – versione 0.10 (Android) · 0.1 (Windows)
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
+
+## MeNoter per Windows (0.1) – registrare le chiamate
+
+App per PC (Windows 10/11) che registra le chiamate di Teams, Webex, Meet, Zoom… come promemoria personale.
+Non entra nella riunione e non usa la registrazione della piattaforma: registra sul PC il tuo microfono e
+l'audio che senti, quindi funziona con qualsiasi app di chiamata.
+
+**Scarica**: https://github.com/wind1980/appunti-ai/releases/download/windows/MeNoter-Windows.zip → estrai la
+cartella dove vuoi (es. Documenti) e avvia `MeNoter.exe`. La prima volta Windows può mostrare "PC protetto da
+Windows": *Ulteriori informazioni → Esegui comunque* (l'app non è firmata).
+
+- **Scegli microfono e uscita audio**: due menu, uno per il microfono (la tua voce) e uno per l'uscita da
+  registrare (casse, cuffie, auricolari Bluetooth). Con gli auricolari BT in chiamata scegli la loro voce
+  "Auricolare"/"Hands-Free" in entrambi i menu. **Prova audio** fa muovere gli indicatori senza registrare.
+- **Registra / Pausa / Fine**. Due tracce separate (io.wav e altri.wav) più audio.wav con tutte e due;
+  il PC non va in sospensione durante la registrazione; se si spegne a metà, l'audio fino a quel momento resta.
+- **Trascrizione sul PC** con whisper (modello Base, Small o Medium, scaricato una volta sola), con "Io" e
+  "Altri" già separati. Nessun audio esce dal computer.
+- **Claude con il tuo account Pro**: Riassunto, Azioni, Interlocutori, Mappa, Email, Traduci e domanda libera
+  (stessi comandi dell'app Android). MeNoter prepara un file con richiesta e trascrizione, lo copia negli
+  Appunti e apre Claude: lì **Ctrl+V** e Invio. Copiata la risposta, **Incolla risposta di Claude** la salva nella nota.
+- **Importa audio** (mp3, m4a, wav, mp4…) per trascrivere registrazioni fatte altrove.
+- Le note sono cartelle normali in **OneDrive\MeNoter** (o Documenti\MeNoter, si cambia nelle Impostazioni):
+  audio, trascrizione e risposte si aprono anche senza MeNoter e arrivano sugli altri dispositivi.
+
+È pensata come blocco note personale delle chiamate a cui partecipi. Registrare una conversazione a cui
+partecipi è in genere lecito in Italia, diffonderla no; al lavoro valgono anche le regole aziendali, e con
+partecipanti in altri Paesi possono servire il consenso o un avviso.
 
 ## Novità della 0.10 (funzioni prese da HiNoter)
 

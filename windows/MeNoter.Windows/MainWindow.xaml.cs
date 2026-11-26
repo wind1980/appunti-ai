@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     // Trascrizione in corso (una alla volta).
     private Note? _busyNote;
     private CancellationTokenSource? _work;
+    private string? _lastClaudeFile;
 
     public MainWindow()
     {
@@ -435,6 +436,8 @@ public partial class MainWindow : Window
             _current.Meta.LastRequest = request.Label;
             _current.Save();
             ClaudeBridge.Send(file, _settings.OpenClaudeDesktop);
+            _lastClaudeFile = file;
+            RevealButton.Visibility = Visibility.Visible;
             ClaudeHint.Text = $"«{request.Label}»: il file è negli Appunti. In Claude premi Ctrl+V e Invio. " +
                               "Quando risponde, copia la risposta e premi «Incolla risposta di Claude».";
         }
@@ -442,6 +445,11 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, "Non riesco a preparare la richiesta:\n" + ex.Message, "MeNoter");
         }
+    }
+
+    private void Reveal_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastClaudeFile != null && File.Exists(_lastClaudeFile)) ClaudeBridge.Reveal(_lastClaudeFile);
     }
 
     private void Paste_Click(object sender, RoutedEventArgs e)
@@ -475,9 +483,30 @@ public partial class MainWindow : Window
     {
         var keep = select?.Folder ?? _current?.Folder;
         _allNotes = NoteStore.List(_settings.ResolveNotesFolder());
+        foreach (var n in _allNotes) RecoverInterrupted(n);
         ApplyFilter();
         var match = _allNotes.FirstOrDefault(n => n.Folder == keep);
         if (match != null) NotesList.SelectedItem = match;
+    }
+
+    /// <summary>
+    /// Registrazione rimasta a metà (PC spento, app chiusa di colpo): i file sono leggibili fino all'ultimo
+    /// salvataggio (ogni 10 secondi), quindi la nota diventa "da trascrivere".
+    /// </summary>
+    private void RecoverInterrupted(Note n)
+    {
+        if (n.Meta.Status != "registrazione" || n.Folder == _recordingNote?.Folder) return;
+        try
+        {
+            using var reader = new NAudio.Wave.WaveFileReader(File.Exists(n.SysPath) ? n.SysPath : n.MicPath);
+            n.Meta.DurationSec = reader.TotalTime.TotalSeconds;
+        }
+        catch
+        {
+            // File illeggibile: si lascia la durata a zero.
+        }
+        n.Meta.Status = "da trascrivere (registrazione interrotta)";
+        n.Save();
     }
 
     private void ApplyFilter()

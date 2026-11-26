@@ -99,9 +99,27 @@ public static class ClaudeBridge
         Open(desktopApp);
     }
 
+    /// <summary>Se il protocollo claude:// non è registrato Windows mostrerebbe "scegli un'app": meglio il browser.</summary>
+    private static bool DesktopAppInstalled()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey("claude");
+            return key != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Apre Esplora file con il file selezionato (per trascinarlo in Claude se l'incolla non va).</summary>
+    public static void Reveal(string filePath) =>
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"") { UseShellExecute = true });
+
     public static void Open(bool desktopApp)
     {
-        if (desktopApp)
+        if (desktopApp && DesktopAppInstalled())
         {
             try
             {
@@ -111,7 +129,7 @@ public static class ClaudeBridge
             }
             catch
             {
-                // App non installata: si apre il browser.
+                // Non si apre: si usa il browser.
             }
         }
         Process.Start(new ProcessStartInfo("https://claude.ai/new") { UseShellExecute = true });
