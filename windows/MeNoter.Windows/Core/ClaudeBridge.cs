@@ -84,6 +84,17 @@ public record ClaudeRequest(string Key, string Label, string Prompt)
 /// </summary>
 public static class ClaudeBridge
 {
+    /// <summary>Solo la trascrizione con la sua intestazione (diventa l'allegato in Claude).</summary>
+    public static string BuildTranscript(Note note)
+    {
+        var header = $"{note.Meta.Title} – {note.Meta.CreatedAt.ToString("d MMMM yyyy, HH:mm", NoteStore.Italian)}";
+        return $"TRASCRIZIONE – {header}\n\n{note.Transcript.Replace("\r\n", "\n")}";
+    }
+
+    /// <summary>Solo il comando, da scrivere nella chat accanto all'allegato.</summary>
+    public static string BuildCommand(Note note, ClaudeRequest request) =>
+        $"{request.FullPrompt(note.Meta.TwoTracks)}\n\n(La trascrizione è nel testo allegato qui sopra.)";
+
     public static string BuildText(Note note, ClaudeRequest request)
     {
         var header = $"{note.Meta.Title} – {note.Meta.CreatedAt.ToString("d MMMM yyyy, HH:mm", NoteStore.Italian)}";
@@ -101,16 +112,43 @@ public static class ClaudeBridge
     }
 
     /// <summary>
-    /// Testo negli Appunti e Claude aperto. Restituisce true se l'ha anche incollato nella chat
-    /// (solo app desktop e con "incolla da solo" attivo): a quel punto basta premere Invio.
+    /// Apre Claude e gli passa la richiesta. Con l'app desktop e "incolla da solo" attivo fa due incolla:
+    /// prima la trascrizione (Claude trasforma da solo un testo lungo in un allegato, come un file .txt),
+    /// poi il comando, che resta scritto nel messaggio. Restituisce true se ha incollato: basta premere Invio.
+    /// Altrimenti negli Appunti resta tutto in un unico testo (comando + trascrizione) da incollare con Ctrl+V.
     /// </summary>
-    public static async Task<bool> SendAsync(string text, bool desktopApp, bool autoPaste)
+    public static async Task<bool> SendAsync(Note note, ClaudeRequest request, bool desktopApp, bool autoPaste)
     {
-        // Testo semplice: l'app Claude lo accetta sempre con Ctrl+V (un file copiato da Esplora no).
-        System.Windows.Clipboard.SetText(text.Replace("\n", Environment.NewLine));
+        SetClipboard(BuildText(note, request));
         bool desktop = Open(desktopApp);
         if (!desktop || !autoPaste) return false;
-        return await AutoPaste.PasteIntoClaudeAsync();
+        SetClipboard(BuildTranscript(note));
+        if (!await AutoPaste.PasteIntoClaudeAsync()) return false;
+        // Il tempo per creare l'allegato, poi il comando.
+        await Task.Delay(1500);
+        SetClipboard(BuildCommand(note, request));
+        await AutoPaste.PasteAgainAsync();
+        await Task.Delay(500);
+        // Negli Appunti torna il testo completo, nel caso serva incollarlo di nuovo.
+        SetClipboard(BuildText(note, request));
+        return true;
+    }
+
+    // Un'app che sta usando gli Appunti può bloccarli per un attimo: si riprova.
+    private static void SetClipboard(string text)
+    {
+        for (int i = 0; i < 5; i++)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(text.Replace("\r\n", "\n").Replace("\n", Environment.NewLine));
+                return;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                Thread.Sleep(100);
+            }
+        }
     }
 
     /// <summary>Se il protocollo claude:// non è registrato Windows mostrerebbe "scegli un'app": meglio il browser.</summary>

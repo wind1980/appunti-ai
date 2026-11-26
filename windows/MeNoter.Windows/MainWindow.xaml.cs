@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using MeNoter.Audio;
 using MeNoter.Core;
@@ -363,7 +364,20 @@ public partial class MainWindow : Window
                 ShowProgress(note, label + (eta != null ? $"  circa {Math.Ceiling(eta.Value.TotalMinutes)} min" : ""), p);
             });
             var lang = _settings.Language;
-            var segments = await Task.Run(() => Transcriber.RunAsync(model, lang, tracks, progress, ct), ct);
+            var skip = _settings.SkipSilence;
+            var report = new Transcriber.Report();
+            List<Segment> segments;
+            try
+            {
+                segments = await Task.Run(() => Transcriber.RunAsync(model, lang, tracks, skip, report, progress, ct), ct);
+            }
+            finally
+            {
+                // Diagnostica: quanta voce ha trovato e quante frasi ha scartato, per capire eventuali buchi.
+                try { await File.AppendAllTextAsync(note.LogPath, report + Environment.NewLine + Environment.NewLine); } catch { }
+            }
+            // La trascrizione precedente non si perde: resta in trascrizione-precedente.txt.
+            if (note.HasTranscript) File.Copy(note.TranscriptPath, note.PreviousTranscriptPath, true);
             await File.WriteAllTextAsync(note.TranscriptPath, Transcriber.Format(segments), ct);
             note.Meta.Status = segments.Count == 0 ? "nessun parlato trovato" : "pronta";
             note.Save();
@@ -440,9 +454,9 @@ public partial class MainWindow : Window
             _lastClaudeFile = file;
             RevealButton.Visibility = Visibility.Visible;
             ClaudeHint.Text = $"«{request.Label}»: apro Claude…";
-            bool pasted = await ClaudeBridge.SendAsync(ClaudeBridge.BuildText(note, request), _settings.OpenClaudeDesktop, _settings.AutoPaste);
+            bool pasted = await ClaudeBridge.SendAsync(note, request, _settings.OpenClaudeDesktop, _settings.AutoPaste);
             ClaudeHint.Text = pasted
-                ? $"«{request.Label}»: richiesta incollata in Claude, controlla e premi Invio. " +
+                ? $"«{request.Label}»: in Claude c'è la trascrizione come allegato e il comando nel messaggio: controlla e premi Invio. " +
                   "Quando risponde, copia la risposta e premi «Incolla risposta di Claude»."
                 : $"«{request.Label}»: richiesta e trascrizione sono negli Appunti. In Claude premi Ctrl+V e Invio. " +
                   "Quando risponde, copia la risposta e premi «Incolla risposta di Claude».";
@@ -458,29 +472,80 @@ public partial class MainWindow : Window
         if (_lastClaudeFile != null && File.Exists(_lastClaudeFile)) ClaudeBridge.Reveal(_lastClaudeFile);
     }
 
+    /// <summary>Incolla l'ultima cosa copiata da Claude: un'immagine (mappa, infografica…) o un testo.</summary>
     private void Paste_Click(object sender, RoutedEventArgs e)
     {
         if (_current == null) return;
-        if (!Clipboard.ContainsText())
+        var label = _current.Meta.LastRequest ?? "Risposta";
+        string? saved = null;
+        try
         {
-            MessageBox.Show(this, "Negli Appunti non c'è testo: in Claude usa il pulsante Copia sotto la risposta.", "MeNoter");
+            saved = PasteImage(_current, label) ?? PasteText(_current, label);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Non riesco a leggere gli Appunti:\n" + ex.Message, "MeNoter");
             return;
         }
-        var text = Clipboard.GetText().Trim();
-        if (text.Length == 0) return;
-        var label = _current.Meta.LastRequest ?? "Risposta";
-        var path = _current.SaveResponse(label, text);
+        if (saved == null)
+        {
+            MessageBox.Show(this,
+                "Negli Appunti non c'è niente da incollare. In Claude usa «Copia» sotto la risposta, " +
+                "oppure tasto destro sull'immagine → «Copia immagine».", "MeNoter");
+            return;
+        }
+        ShowNote(_current, selectFile: saved);
+        ClaudeHint.Text = Note.IsImage(saved) ? $"Immagine salvata in «{label}»." : $"Risposta salvata come «{label}».";
+    }
 
+    private string? PasteText(Note note, string label)
+    {
+        if (!Clipboard.ContainsText()) return null;
+        var text = Clipboard.GetText().Trim();
+        if (text.Length == 0) return null;
+        var path = note.SaveResponse(label, text);
         // Il riassunto comincia con "# Titolo": se la nota ha ancora il nome automatico, lo prende.
         var first = text.Split('\n').FirstOrDefault()?.Trim() ?? "";
-        if (label == "Riassunto" && first.StartsWith("# ") && _current.Meta.Title.StartsWith("Riunione "))
+        if (label == "Riassunto" && first.StartsWith("# ") && note.Meta.Title.StartsWith("Riunione "))
         {
-            _current.Meta.Title = first[2..].Trim();
-            _current.Save();
-            RefreshListItem(_current);
+            note.Meta.Title = first[2..].Trim();
+            note.Save();
+            RefreshListItem(note);
         }
-        ShowNote(_current, selectFile: path);
-        ClaudeHint.Text = $"Risposta salvata come «{label}».";
+        return path;
+    }
+
+    /// <summary>Immagine copiata (dal browser o dall'app Claude) o file immagine copiato in Esplora file.</summary>
+    private static string? PasteImage(Note note, string label)
+    {
+        if (Clipboard.ContainsFileDropList())
+        {
+            var files = Clipboard.GetFileDropList().Cast<string>().Where(Note.IsImage).ToList();
+            string? last = null;
+            foreach (var f in files)
+            {
+                last = note.NewResponsePath(label, Path.GetExtension(f).ToLowerInvariant());
+                File.Copy(f, last, true);
+            }
+            if (last != null) return last;
+        }
+        // Chrome ed Electron mettono anche il formato "PNG", più fedele (trasparenze) di quello standard di Windows.
+        if (Clipboard.GetData("PNG") is MemoryStream png)
+        {
+            var path = note.NewResponsePath(label, ".png");
+            File.WriteAllBytes(path, png.ToArray());
+            return path;
+        }
+        if (Clipboard.ContainsImage() && Clipboard.GetImage() is { } bitmap)
+        {
+            var path = note.NewResponsePath(label, ".png");
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var fs = File.Create(path);
+            encoder.Save(fs);
+            return path;
+        }
+        return null;
     }
 
     // ---------------- Elenco e dettaglio ----------------
@@ -558,9 +623,11 @@ public partial class MainWindow : Window
         ContentTabs.Items.Add(new TabItem
         {
             Header = "Trascrizione",
-            Content = TextView(note.HasTranscript ? note.Transcript
-                : note.Meta.Status == "registrazione" ? "Registrazione in corso…"
-                : "La trascrizione comparirà qui.", search),
+            Content = note.HasTranscript
+                ? EditableView(note.TranscriptPath, search,
+                    "Puoi correggere la trascrizione (nomi, parole sbagliate): si salva da sola. " +
+                    (File.Exists(note.PreviousTranscriptPath) ? "La versione precedente è in trascrizione-precedente.txt." : ""))
+                : TextView(note.Meta.Status == "registrazione" ? "Registrazione in corso…" : "La trascrizione comparirà qui.", search),
         });
         TabItem? toSelect = null;
         foreach (var file in note.Responses())
@@ -604,17 +671,23 @@ public partial class MainWindow : Window
 
     private UIElement ResponseView(Note note, string file)
     {
+        var image = Note.IsImage(file);
         var panel = new DockPanel();
         var bar = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
         DockPanel.SetDock(bar, Dock.Top);
-        var copy = new Button { Content = "Copia" };
-        copy.Click += (_, _) => Clipboard.SetText(File.ReadAllText(file));
+        var copy = new Button { Content = image ? "Copia immagine" : "Copia" };
+        copy.Click += (_, _) =>
+        {
+            if (image) Clipboard.SetImage(LoadImage(file));
+            else Clipboard.SetText(File.ReadAllText(file));
+        };
         var open = new Button { Content = "Apri il file" };
         open.Click += (_, _) => Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
         var delete = new Button { Content = "Elimina" };
         delete.Click += (_, _) =>
         {
-            if (MessageBox.Show(this, "Eliminare questa risposta di Claude?", "MeNoter", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            if (MessageBox.Show(this, image ? "Eliminare questa immagine?" : "Eliminare questa risposta di Claude?", "MeNoter",
+                    MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
             File.Delete(file);
             ShowNote(note);
         };
@@ -622,7 +695,71 @@ public partial class MainWindow : Window
         bar.Children.Add(open);
         bar.Children.Add(delete);
         panel.Children.Add(bar);
-        panel.Children.Add(TextView(File.ReadAllText(file)));
+        if (image)
+        {
+            panel.Children.Add(new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = new Image { Source = LoadImage(file), Stretch = System.Windows.Media.Stretch.Uniform, MaxWidth = 1400 },
+            });
+        }
+        else
+        {
+            panel.Children.Add(EditableView(file, "", "Puoi modificare il testo: si salva da solo."));
+        }
+        return panel;
+    }
+
+    /// <summary>Immagine caricata in memoria (il file resta libero: si può eliminare o sostituire).</summary>
+    private static BitmapImage LoadImage(string path)
+    {
+        var img = new BitmapImage();
+        img.BeginInit();
+        img.CacheOption = BitmapCacheOption.OnLoad;
+        img.UriSource = new Uri(path);
+        img.EndInit();
+        img.Freeze();
+        return img;
+    }
+
+    /// <summary>Testo modificabile che si salva da solo nel suo file (1 s dopo l'ultima modifica e quando si esce).</summary>
+    private UIElement EditableView(string path, string search, string hint)
+    {
+        var box = TextView(File.ReadAllText(path), search);
+        box.IsReadOnly = false;
+        box.AcceptsReturn = true;
+        box.AcceptsTab = true;
+        var status = new TextBlock { Style = (Style)FindResource("Hint"), Text = hint, Margin = new Thickness(0, 6, 0, 0) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        string saved = box.Text;
+        void Save()
+        {
+            timer.Stop();
+            if (box.Text == saved) return;
+            try
+            {
+                File.WriteAllText(path, box.Text);
+                saved = box.Text;
+                status.Text = "Modifiche salvate alle " + DateTime.Now.ToString("HH:mm:ss");
+            }
+            catch (Exception ex)
+            {
+                status.Text = "Non riesco a salvare: " + ex.Message;
+            }
+        }
+        timer.Tick += (_, _) => Save();
+        box.TextChanged += (_, _) =>
+        {
+            timer.Stop();
+            timer.Start();
+        };
+        box.LostFocus += (_, _) => Save();
+        box.Unloaded += (_, _) => Save();
+        var panel = new DockPanel();
+        DockPanel.SetDock(status, Dock.Top);
+        panel.Children.Add(status);
+        panel.Children.Add(box);
         return panel;
     }
 

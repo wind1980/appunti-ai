@@ -60,81 +60,115 @@ public static class Transcriber
         "sottotitolato", "a cura di qtss",
     };
 
+    /// <summary>Numeri della trascrizione, scritti in trascrizione-log.txt per capire cosa è successo.</summary>
+    public class Report
+    {
+        public List<string> Lines { get; } = new();
+        public void Add(string line) => Lines.Add(line);
+        public override string ToString() => string.Join(Environment.NewLine, Lines);
+    }
+
     public static async Task<List<Segment>> RunAsync(
         WhisperModel model,
         string language,
         IReadOnlyList<(string Path, string Speaker)> tracks,
+        bool skipSilence,
+        Report report,
         IProgress<double> progress,
         CancellationToken ct)
     {
         var result = new List<Segment>();
         // Tutti i core tranne uno, così il PC resta usabile.
         int threads = Math.Clamp(Environment.ProcessorCount - 1, 2, 16);
+        report.Add($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  modello {model.Key}, lingua {language}, {threads} core, " +
+                   (skipSilence ? "salto dei silenzi attivo" : "audio intero"));
         using var factory = WhisperFactory.FromPath(model.FilePath);
 
         // Prima si cercano i tratti con voce in ogni traccia: il lavoro di whisper si misura su quelli.
         var prepared = tracks.Select(t =>
         {
             var samples = Wav.Read(t.Path);
-            var (compact, map) = Compact(samples);
-            return (t.Speaker, Samples: samples, Compact: compact, Map: map);
+            var (compact, map, threshold) = skipSilence
+                ? Compact(samples)
+                : (samples, new List<Piece> { new(0, 0, samples.Length) }, 0f);
+            report.Add($"Traccia {(t.Speaker.Length > 0 ? t.Speaker : "audio")}: {samples.Length / 16000.0:0} s, " +
+                       $"con voce {compact.Length / 16000.0:0} s, livello max {Wav.Rms(samples, 0, samples.Length):0.0000}, soglia {threshold:0.0000}");
+            return (t.Speaker, Samples: samples, Compact: compact, Map: map, Threshold: threshold);
         }).ToList();
         double totalWork = Math.Max(1, prepared.Sum(p => p.Compact.Length));
         double doneWork = 0;
 
-        foreach (var (speaker, samples, compact, map) in prepared)
+        foreach (var (speaker, samples, compact, map, threshold) in prepared)
         {
-            if (compact.Length < 16000) continue; // meno di un secondo di voce: niente da trascrivere
-            using var processor = factory.CreateBuilder()
-                .WithLanguage(language)
-                .WithThreads(threads)
-                .Build();
-            using var stream = WavStream(compact);
-            await foreach (var seg in processor.ProcessAsync(stream, ct))
+            int kept = 0, quiet = 0, invented = 0;
+            if (compact.Length >= 8000) // almeno mezzo secondo di voce
             {
-                progress.Report((doneWork + Math.Min(compact.Length, seg.End.TotalSeconds * 16000)) / totalWork);
-                var text = seg.Text.Trim();
-                if (!Keep(text)) continue;
-                var start = ToOriginal(map, seg.Start);
-                var end = ToOriginal(map, seg.End);
-                if (end < start) end = start + (seg.End - seg.Start);
-                // Niente frasi su tratti quasi silenziosi: sono quasi sempre inventate.
-                var rms = Wav.Rms(samples, (int)(start.TotalSeconds * 16000), (int)(end.TotalSeconds * 16000));
-                if (rms < 0.004) continue;
-                result.Add(new Segment(start, end, speaker, text));
+                using var processor = factory.CreateBuilder()
+                    .WithLanguage(language)
+                    .WithThreads(threads)
+                    .Build();
+                using var stream = WavStream(compact);
+                // Sotto questo livello una frase è quasi sempre inventata da whisper sul silenzio.
+                float minRms = Math.Max(0.0008f, threshold * 0.4f);
+                await foreach (var seg in processor.ProcessAsync(stream, ct))
+                {
+                    progress.Report((doneWork + Math.Min(compact.Length, seg.End.TotalSeconds * 16000)) / totalWork);
+                    var text = seg.Text.Trim();
+                    if (!Keep(text))
+                    {
+                        invented++;
+                        continue;
+                    }
+                    var start = ToOriginal(map, seg.Start);
+                    var end = ToOriginal(map, seg.End);
+                    if (end <= start) end = start + (seg.End - seg.Start);
+                    var rms = Wav.Rms(samples, (int)(start.TotalSeconds * 16000), (int)(end.TotalSeconds * 16000));
+                    if (rms < minRms)
+                    {
+                        quiet++;
+                        continue;
+                    }
+                    kept++;
+                    result.Add(new Segment(start, end, speaker, text));
+                }
             }
             doneWork += compact.Length;
+            report.Add($"  {(speaker.Length > 0 ? speaker : "audio")}: {kept} frasi tenute, {quiet} scartate perché troppo basse, {invented} scartate perché vuote o inventate");
         }
         progress.Report(1);
-        return RemoveEcho(result).OrderBy(s => s.Start).ToList();
+        int before = result.Count;
+        var final = RemoveEcho(result).OrderBy(s => s.Start).ToList();
+        report.Add($"Eco tolta: {before - final.Count} frasi. Totale: {final.Count} frasi.");
+        return final;
     }
 
     /// <summary>Pezzo di voce: dove sta nell'audio compattato e dove nell'originale (in campioni).</summary>
     private readonly record struct Piece(int CompactStart, int OriginalStart, int Length);
 
     /// <summary>
-    /// Tiene solo i tratti con voce (con un po' di margine) e li mette uno dopo l'altro, separati da 0,3 s
-    /// di silenzio. In una riunione ognuna delle due tracce è in silenzio gran parte del tempo,
-    /// quindi whisper lavora su molto meno audio.
+    /// Tiene solo i tratti con voce (con margine abbondante) e li mette uno dopo l'altro, separati da 0,3 s
+    /// di silenzio. La soglia è prudente e si adatta al volume della traccia: le chiamate arrivano spesso
+    /// a volume basso, e una voce bassa non deve mai essere scambiata per silenzio.
     /// </summary>
-    private static (float[] Compact, List<Piece> Map) Compact(float[] s)
+    private static (float[] Compact, List<Piece> Map, float Threshold) Compact(float[] s)
     {
         const int win = 8000; // finestre da 0,5 s
         int windows = s.Length / win + 1;
         var rms = new float[windows];
         for (int w = 0; w < windows; w++) rms[w] = Wav.Rms(s, w * win, (w + 1) * win);
-        // Soglia: sopra il rumore di fondo della traccia, ma mai sotto un minimo.
         var sorted = rms.OrderBy(v => v).ToArray();
-        float floor = sorted[(int)(sorted.Length * 0.2)];
-        float threshold = Math.Max(0.006f, floor * 3);
+        float floor = sorted[(int)(sorted.Length * 0.2)];   // rumore di fondo
+        float loud = sorted[(int)(sorted.Length * 0.95)];   // voce piena
+        // Appena sopra il rumore di fondo, e comunque molto sotto il volume della voce.
+        float threshold = Math.Max(0.0012f, Math.Min(floor * 2.5f + 0.0005f, loud * 0.25f));
 
         var regions = new List<(int Start, int End)>();
         for (int w = 0; w < windows; w++)
         {
             if (rms[w] < threshold) continue;
-            int a = Math.Max(0, w * win - win);              // 0,5 s prima
-            int b = Math.Min(s.Length, (w + 1) * win + win); // 0,5 s dopo
-            if (regions.Count > 0 && a <= regions[^1].End + 16000) // pause sotto 1 s: stesso tratto
+            int a = Math.Max(0, w * win - 2 * win);              // 1 s prima
+            int b = Math.Min(s.Length, (w + 1) * win + 2 * win); // 1 s dopo
+            if (regions.Count > 0 && a <= regions[^1].End + 2 * 16000) // pause sotto 2 s: stesso tratto
                 regions[^1] = (regions[^1].Start, Math.Max(regions[^1].End, b));
             else
                 regions.Add((a, b));
@@ -151,7 +185,7 @@ public static class Transcriber
             map.Add(new Piece(pos, a, b - a));
             pos += b - a + gap;
         }
-        return (compact, map);
+        return (compact, map, threshold);
     }
 
     private static TimeSpan ToOriginal(List<Piece> map, TimeSpan compactTime)

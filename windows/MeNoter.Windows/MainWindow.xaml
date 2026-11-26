@@ -129,13 +129,13 @@
                                                  ToolTip="Una domanda libera sulla riunione"/>
                                     </DockPanel>
                                     <DockPanel>
-                                        <Button DockPanel.Dock="Left" Content="📋  Incolla risposta di Claude"
+                                        <Button DockPanel.Dock="Left" Content="📋  Incolla risposta (testo o immagine)"
                                                 Style="{StaticResource Primary}" Click="Paste_Click" Margin="0,0,8,0"/>
                                         <Button x:Name="RevealButton" DockPanel.Dock="Left" Content="Mostra il file"
                                                 Click="Reveal_Click" Margin="0,0,12,0" Visibility="Collapsed"
                                                 ToolTip="Se Ctrl+V in Claude non allega il file, trascinalo da qui nella chat"/>
                                         <TextBlock x:Name="ClaudeHint" Style="{StaticResource Hint}" VerticalAlignment="Center"
-                                                   Text="Il pulsante prepara un file con richiesta e trascrizione e lo copia: in Claude premi Ctrl+V e Invio. Poi copia la risposta di Claude e premi «Incolla risposta»."/>
+                                                   Text="Ogni pulsante apre Claude con la trascrizione allegata e il comando già scritto: tu premi Invio. Poi copia la risposta di Claude (testo o immagine) e premi «Incolla risposta»."/>
                                     </DockPanel>
                                 </StackPanel>
                             </Border>

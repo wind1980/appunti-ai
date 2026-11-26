@@ -26,6 +26,9 @@ public class Settings
     /// <summary>Con l'app Claude per desktop, incolla da sola la richiesta nella chat (poi si preme Invio).</summary>
     public bool AutoPaste { get; set; } = true;
 
+    /// <summary>Trascrive solo i tratti con voce (più veloce). Se manca del testo, si disattiva.</summary>
+    public bool SkipSilence { get; set; } = true;
+
     /// <summary>Trascrive da sola appena finisce la registrazione.</summary>
     public bool AutoTranscribe { get; set; } = true;
 
