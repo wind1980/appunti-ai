@@ -24,6 +24,7 @@ public partial class SettingsWindow : Window
         LanguageBox.SelectedIndex = Math.Max(0, Array.FindIndex(Languages, l => l.Code == settings.Language));
         AutoBox.IsChecked = settings.AutoTranscribe;
         DesktopBox.IsChecked = settings.OpenClaudeDesktop;
+        PasteBox.IsChecked = settings.AutoPaste;
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -49,6 +50,7 @@ public partial class SettingsWindow : Window
         _settings.Language = Languages[Math.Max(0, LanguageBox.SelectedIndex)].Code;
         _settings.AutoTranscribe = AutoBox.IsChecked == true;
         _settings.OpenClaudeDesktop = DesktopBox.IsChecked == true;
+        _settings.AutoPaste = PasteBox.IsChecked == true;
         _settings.Save();
         DialogResult = true;
     }

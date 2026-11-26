@@ -1,8 +1,17 @@
-# MeNoter – versione 0.10 (Android) · 0.1 (Windows)
+# MeNoter – versione 0.10 (Android) · 0.2 (Windows)
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
 
-## MeNoter per Windows (0.1) – registrare le chiamate
+## MeNoter per Windows – registrare le chiamate
+
+**Novità della 0.2 (Windows)**
+- **Claude riceve davvero la richiesta**: negli Appunti va il testo (comando + trascrizione), non più il file,
+  e con l'app Claude per desktop MeNoter lo **incolla da solo** nella chat nuova: controlli e premi Invio.
+  Con il browser, o se l'incolla automatico non riesce, basta Ctrl+V. (Impostazioni: "Incolla da sola la richiesta".)
+- Nuovo pulsante **Infografica**, come su Android.
+- **Trascrizione più veloce**: whisper lavora solo sui tratti in cui qualcuno parla (in una riunione ogni traccia
+  è in silenzio gran parte del tempo) e usa tutti i core del processore tranne uno.
+
 
 App per PC (Windows 10/11) che registra le chiamate di Teams, Webex, Meet, Zoom… come promemoria personale.
 Non entra nella riunione e non usa la registrazione della piattaforma: registra sul PC il tuo microfono e
@@ -19,9 +28,8 @@ Windows": *Ulteriori informazioni → Esegui comunque* (l'app non è firmata).
   il PC non va in sospensione durante la registrazione; se si spegne a metà, l'audio fino a quel momento resta.
 - **Trascrizione sul PC** con whisper (modello Base, Small o Medium, scaricato una volta sola), con "Io" e
   "Altri" già separati. Nessun audio esce dal computer.
-- **Claude con il tuo account Pro**: Riassunto, Azioni, Interlocutori, Mappa, Email, Traduci e domanda libera
-  (stessi comandi dell'app Android). MeNoter prepara un file con richiesta e trascrizione, lo copia negli
-  Appunti e apre Claude: lì **Ctrl+V** e Invio. Copiata la risposta, **Incolla risposta di Claude** la salva nella nota.
+- **Claude con il tuo account Pro**: Riassunto, Azioni, Interlocutori, Mappa, Infografica, Email, Traduci e domanda
+  libera (stessi comandi dell'app Android). MeNoter apre Claude e incolla richiesta e trascrizione: tu premi Invio. Copiata la risposta, **Incolla risposta di Claude** la salva nella nota.
 - **Importa audio** (mp3, m4a, wav, mp4…) per trascrivere registrazioni fatte altrove.
 - Le note sono cartelle normali in **OneDrive\MeNoter** (o Documenti\MeNoter, si cambia nelle Impostazioni):
   audio, trascrizione e risposte si aprono anche senza MeNoter e arrivano sugli altri dispositivi.

@@ -23,6 +23,9 @@ public class Settings
     /// <summary>Apre l'app Claude per desktop (se installata) invece di claude.ai nel browser.</summary>
     public bool OpenClaudeDesktop { get; set; } = true;
 
+    /// <summary>Con l'app Claude per desktop, incolla da sola la richiesta nella chat (poi si preme Invio).</summary>
+    public bool AutoPaste { get; set; } = true;
+
     /// <summary>Trascrive da sola appena finisce la registrazione.</summary>
     public bool AutoTranscribe { get; set; } = true;
 
