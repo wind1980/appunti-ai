@@ -68,30 +68,109 @@ public static class Transcriber
         CancellationToken ct)
     {
         var result = new List<Segment>();
+        // Tutti i core tranne uno, così il PC resta usabile.
+        int threads = Math.Clamp(Environment.ProcessorCount - 1, 2, 16);
         using var factory = WhisperFactory.FromPath(model.FilePath);
-        for (int t = 0; t < tracks.Count; t++)
-        {
-            var (path, speaker) = tracks[t];
-            var samples = Wav.Read(path);
-            double totalSec = Math.Max(1, samples.Length / 16000.0);
-            // Traccia muta (es. microfono spento per tutta la chiamata): si salta.
-            if (Wav.Rms(samples, 0, samples.Length) < 0.0005) continue;
 
-            using var processor = factory.CreateBuilder().WithLanguage(language).Build();
-            await using var stream = File.OpenRead(path);
+        // Prima si cercano i tratti con voce in ogni traccia: il lavoro di whisper si misura su quelli.
+        var prepared = tracks.Select(t =>
+        {
+            var samples = Wav.Read(t.Path);
+            var (compact, map) = Compact(samples);
+            return (t.Speaker, Samples: samples, Compact: compact, Map: map);
+        }).ToList();
+        double totalWork = Math.Max(1, prepared.Sum(p => p.Compact.Length));
+        double doneWork = 0;
+
+        foreach (var (speaker, samples, compact, map) in prepared)
+        {
+            if (compact.Length < 16000) continue; // meno di un secondo di voce: niente da trascrivere
+            using var processor = factory.CreateBuilder()
+                .WithLanguage(language)
+                .WithThreads(threads)
+                .Build();
+            using var stream = WavStream(compact);
             await foreach (var seg in processor.ProcessAsync(stream, ct))
             {
-                progress.Report((t + Math.Min(1, seg.End.TotalSeconds / totalSec)) / tracks.Count);
+                progress.Report((doneWork + Math.Min(compact.Length, seg.End.TotalSeconds * 16000)) / totalWork);
                 var text = seg.Text.Trim();
                 if (!Keep(text)) continue;
+                var start = ToOriginal(map, seg.Start);
+                var end = ToOriginal(map, seg.End);
+                if (end < start) end = start + (seg.End - seg.Start);
                 // Niente frasi su tratti quasi silenziosi: sono quasi sempre inventate.
-                var rms = Wav.Rms(samples, (int)(seg.Start.TotalSeconds * 16000), (int)(seg.End.TotalSeconds * 16000));
+                var rms = Wav.Rms(samples, (int)(start.TotalSeconds * 16000), (int)(end.TotalSeconds * 16000));
                 if (rms < 0.004) continue;
-                result.Add(new Segment(seg.Start, seg.End, speaker, text));
+                result.Add(new Segment(start, end, speaker, text));
             }
+            doneWork += compact.Length;
         }
         progress.Report(1);
         return RemoveEcho(result).OrderBy(s => s.Start).ToList();
+    }
+
+    /// <summary>Pezzo di voce: dove sta nell'audio compattato e dove nell'originale (in campioni).</summary>
+    private readonly record struct Piece(int CompactStart, int OriginalStart, int Length);
+
+    /// <summary>
+    /// Tiene solo i tratti con voce (con un po' di margine) e li mette uno dopo l'altro, separati da 0,3 s
+    /// di silenzio. In una riunione ognuna delle due tracce è in silenzio gran parte del tempo,
+    /// quindi whisper lavora su molto meno audio.
+    /// </summary>
+    private static (float[] Compact, List<Piece> Map) Compact(float[] s)
+    {
+        const int win = 8000; // finestre da 0,5 s
+        int windows = s.Length / win + 1;
+        var rms = new float[windows];
+        for (int w = 0; w < windows; w++) rms[w] = Wav.Rms(s, w * win, (w + 1) * win);
+        // Soglia: sopra il rumore di fondo della traccia, ma mai sotto un minimo.
+        var sorted = rms.OrderBy(v => v).ToArray();
+        float floor = sorted[(int)(sorted.Length * 0.2)];
+        float threshold = Math.Max(0.006f, floor * 3);
+
+        var regions = new List<(int Start, int End)>();
+        for (int w = 0; w < windows; w++)
+        {
+            if (rms[w] < threshold) continue;
+            int a = Math.Max(0, w * win - win);              // 0,5 s prima
+            int b = Math.Min(s.Length, (w + 1) * win + win); // 0,5 s dopo
+            if (regions.Count > 0 && a <= regions[^1].End + 16000) // pause sotto 1 s: stesso tratto
+                regions[^1] = (regions[^1].Start, Math.Max(regions[^1].End, b));
+            else
+                regions.Add((a, b));
+        }
+
+        const int gap = 4800; // 0,3 s di silenzio tra un tratto e l'altro
+        var map = new List<Piece>();
+        int length = regions.Sum(r => r.End - r.Start + gap);
+        var compact = new float[Math.Max(0, length)];
+        int pos = 0;
+        foreach (var (a, b) in regions)
+        {
+            Array.Copy(s, a, compact, pos, b - a);
+            map.Add(new Piece(pos, a, b - a));
+            pos += b - a + gap;
+        }
+        return (compact, map);
+    }
+
+    private static TimeSpan ToOriginal(List<Piece> map, TimeSpan compactTime)
+    {
+        int c = (int)(compactTime.TotalSeconds * 16000);
+        var piece = map.LastOrDefault(p => p.CompactStart <= c);
+        if (piece.Length == 0) return compactTime;
+        int offset = Math.Min(c - piece.CompactStart, piece.Length);
+        return TimeSpan.FromSeconds((piece.OriginalStart + offset) / 16000.0);
+    }
+
+    /// <summary>WAV 16 kHz mono 16 bit in memoria, il formato che legge whisper.</summary>
+    private static MemoryStream WavStream(float[] samples)
+    {
+        var ms = new MemoryStream();
+        using (var writer = new NAudio.Wave.WaveFileWriter(new NAudio.Utils.IgnoreDisposeStream(ms), Wav.Format))
+            writer.WriteSamples(samples, 0, samples.Length);
+        ms.Position = 0;
+        return ms;
     }
 
     private static bool Keep(string text)

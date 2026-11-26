@@ -1,4 +1,3 @@
-using System.Collections.Specialized;
 using System.Diagnostics;
 
 namespace MeNoter.Core;
@@ -50,6 +49,11 @@ public record ClaudeRequest(string Key, string Label, string Prompt)
             - Ramo principale
               - Sotto-punto
             """),
+        new("infographic", "Infografica",
+            """
+            Crea un'infografica che riassuma la trascrizione qui sotto (o nel file allegato): titolo, numeri o fatti chiave, decisioni, prossimi passi.
+            Creala come FILE IMMAGINE PNG scaricabile (usa l'esecuzione del codice, per esempio Python con matplotlib o Pillow), in formato verticale per smartphone (circa 1080 px di larghezza), colori vivaci, testo grande e leggibile, in italiano. Nel messaggio scrivi solo una riga che dice che il file è pronto.
+            """),
         new("email", "Email",
             """
             Scrivi una email di follow-up per i partecipanti a questa riunione (trascrizione qui sotto o nel file allegato): ringraziamento breve, punti principali discussi, decisioni, prossimi passi con responsabili e scadenze. Tono professionale ma cordiale, in italiano. Proponi anche l'oggetto.
@@ -74,29 +78,39 @@ public record ClaudeRequest(string Key, string Label, string Prompt)
 
 /// <summary>
 /// Manda una nota all'app Claude per desktop (o a claude.ai) con il tuo account Pro, senza API:
-/// prepara un file .txt con il comando in cima e la trascrizione, lo mette negli Appunti di Windows
-/// e apre Claude. Lì basta Ctrl+V e Invio.
+/// mette negli Appunti di Windows il testo con il comando in cima e la trascrizione (Claude, se è lungo,
+/// lo trasforma da solo in un allegato), apre Claude e, con l'app desktop, lo incolla da solo.
+/// Il testo resta anche in un file .txt nella cartella della nota.
 /// </summary>
 public static class ClaudeBridge
 {
+    public static string BuildText(Note note, ClaudeRequest request)
+    {
+        var header = $"{note.Meta.Title} – {note.Meta.CreatedAt.ToString("d MMMM yyyy, HH:mm", NoteStore.Italian)}";
+        return $"RICHIESTA PER CLAUDE – {request.Label.ToUpperInvariant()}\n\n{request.FullPrompt(note.Meta.TwoTracks)}\n\n" +
+               $"==========\nTRASCRIZIONE – {header}\n\n{note.Transcript.Replace("\r\n", "\n")}";
+    }
+
     public static string PrepareFile(Note note, ClaudeRequest request)
     {
         Directory.CreateDirectory(note.RequestsDir);
-        var header = $"{note.Meta.Title} – {note.Meta.CreatedAt.ToString("d MMMM yyyy, HH:mm", NoteStore.Italian)}";
-        var body =
-            $"RICHIESTA PER CLAUDE – {request.Label.ToUpperInvariant()}\n\n{request.FullPrompt(note.Meta.TwoTracks)}\n\n" +
-            $"==========\nTRASCRIZIONE – {header}\n\n{note.Transcript}";
+        var body = BuildText(note, request);
         var path = Path.Combine(note.RequestsDir, $"{NoteStore.Safe(request.Label)} - {NoteStore.Safe(note.Meta.Title)}.txt");
         File.WriteAllText(path, body.Replace("\r\n", "\n").Replace("\n", Environment.NewLine));
         return path;
     }
 
-    /// <summary>File negli Appunti (si incolla in Claude come allegato) e Claude aperto.</summary>
-    public static void Send(string filePath, bool desktopApp)
+    /// <summary>
+    /// Testo negli Appunti e Claude aperto. Restituisce true se l'ha anche incollato nella chat
+    /// (solo app desktop e con "incolla da solo" attivo): a quel punto basta premere Invio.
+    /// </summary>
+    public static async Task<bool> SendAsync(string text, bool desktopApp, bool autoPaste)
     {
-        var files = new StringCollection { filePath };
-        System.Windows.Clipboard.SetFileDropList(files);
-        Open(desktopApp);
+        // Testo semplice: l'app Claude lo accetta sempre con Ctrl+V (un file copiato da Esplora no).
+        System.Windows.Clipboard.SetText(text.Replace("\n", Environment.NewLine));
+        bool desktop = Open(desktopApp);
+        if (!desktop || !autoPaste) return false;
+        return await AutoPaste.PasteIntoClaudeAsync();
     }
 
     /// <summary>Se il protocollo claude:// non è registrato Windows mostrerebbe "scegli un'app": meglio il browser.</summary>
@@ -117,7 +131,8 @@ public static class ClaudeBridge
     public static void Reveal(string filePath) =>
         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"") { UseShellExecute = true });
 
-    public static void Open(bool desktopApp)
+    /// <summary>Apre una chat nuova. True se ha aperto l'app desktop, false se il browser.</summary>
+    public static bool Open(bool desktopApp)
     {
         if (desktopApp && DesktopAppInstalled())
         {
@@ -125,7 +140,7 @@ public static class ClaudeBridge
             {
                 // L'app Claude per desktop registra il protocollo claude://
                 Process.Start(new ProcessStartInfo("claude://claude.ai/new") { UseShellExecute = true });
-                return;
+                return true;
             }
             catch
             {
@@ -133,5 +148,6 @@ public static class ClaudeBridge
             }
         }
         Process.Start(new ProcessStartInfo("https://claude.ai/new") { UseShellExecute = true });
+        return false;
     }
 }

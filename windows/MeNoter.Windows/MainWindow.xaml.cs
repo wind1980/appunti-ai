@@ -406,23 +406,24 @@ public partial class MainWindow : Window
 
     // ---------------- Claude ----------------
 
-    private void Claude_Click(object sender, RoutedEventArgs e)
+    private async void Claude_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: ClaudeRequest request }) SendToClaude(request);
+        if (sender is Button { Tag: ClaudeRequest request }) await SendToClaudeAsync(request);
     }
 
-    private void Ask_Click(object sender, RoutedEventArgs e)
+    private async void Ask_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(AskBox.Text))
         {
             AskBox.Focus();
             return;
         }
-        SendToClaude(ClaudeRequest.Ask(AskBox.Text));
+        var question = AskBox.Text;
         AskBox.Text = "";
+        await SendToClaudeAsync(ClaudeRequest.Ask(question));
     }
 
-    private void SendToClaude(ClaudeRequest request)
+    private async Task SendToClaudeAsync(ClaudeRequest request)
     {
         if (_current == null) return;
         if (!_current.HasTranscript)
@@ -432,14 +433,19 @@ public partial class MainWindow : Window
         }
         try
         {
-            var file = ClaudeBridge.PrepareFile(_current, request);
-            _current.Meta.LastRequest = request.Label;
-            _current.Save();
-            ClaudeBridge.Send(file, _settings.OpenClaudeDesktop);
+            var note = _current;
+            var file = ClaudeBridge.PrepareFile(note, request);
+            note.Meta.LastRequest = request.Label;
+            note.Save();
             _lastClaudeFile = file;
             RevealButton.Visibility = Visibility.Visible;
-            ClaudeHint.Text = $"«{request.Label}»: il file è negli Appunti. In Claude premi Ctrl+V e Invio. " +
-                              "Quando risponde, copia la risposta e premi «Incolla risposta di Claude».";
+            ClaudeHint.Text = $"«{request.Label}»: apro Claude…";
+            bool pasted = await ClaudeBridge.SendAsync(ClaudeBridge.BuildText(note, request), _settings.OpenClaudeDesktop, _settings.AutoPaste);
+            ClaudeHint.Text = pasted
+                ? $"«{request.Label}»: richiesta incollata in Claude, controlla e premi Invio. " +
+                  "Quando risponde, copia la risposta e premi «Incolla risposta di Claude»."
+                : $"«{request.Label}»: richiesta e trascrizione sono negli Appunti. In Claude premi Ctrl+V e Invio. " +
+                  "Quando risponde, copia la risposta e premi «Incolla risposta di Claude».";
         }
         catch (Exception ex)
         {
