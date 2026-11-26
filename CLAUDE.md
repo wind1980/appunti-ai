@@ -7,6 +7,15 @@ niente API, niente server, niente pacchetti di minuti.
 Il progetto viene modificato da **più chat e da più PC**. L'unico punto comune è questo repository
 (`wind1980/appunti-ai`). Per non creare versioni parallele valgono queste regole.
 
+## Struttura
+- `app/`: app Android (Kotlin). Workflow "Compila APK": release `build-N`, link `releases/latest`.
+- `windows/MeNoter.Windows/`: app Windows (C# .NET 8, WPF) per registrare le chiamate del PC.
+  Workflow "Compila MeNoter Windows": release fissa `windows`, link
+  `https://github.com/wind1980/appunti-ai/releases/download/windows/MeNoter-Windows.zip`.
+  Versione nel tag `<Version>` del file `.csproj`. Le modifiche solo a `windows/` non producono un APK.
+- I comandi per Claude sono gli stessi nelle due app: se ne cambi uno (Android `data/Prefs.kt`,
+  Windows `Core/ClaudeBridge.cs`) aggiorna anche l'altro.
+
 ## Prima di iniziare
 1. Scarica sempre l'ultima versione di `main` (`git pull` o un clone nuovo) prima di toccare qualsiasi file.
 2. Leggi il README e l'ultimo commit di `main` per sapere a che versione è arrivata l'app.
