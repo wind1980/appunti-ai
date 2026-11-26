@@ -1,35 +1,64 @@
 <Window x:Class="MeNoter.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Impostazioni – MeNoter" Width="560" SizeToContent="Height" ResizeMode="NoResize"
-        WindowStartupLocation="CenterOwner" Background="#F5F6FB" FontFamily="Segoe UI" FontSize="14">
-    <StackPanel Margin="20">
-        <TextBlock Text="Cartella delle note" Style="{StaticResource Label}"/>
-        <DockPanel Margin="0,0,0,4">
-            <Button DockPanel.Dock="Right" Content="Sfoglia…" Click="Browse_Click" Margin="8,0,0,0"/>
-            <TextBox x:Name="FolderBox" VerticalContentAlignment="Center" Padding="6"/>
-        </DockPanel>
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,16"
-                   Text="In una cartella di OneDrive le note (audio, trascrizione, risposte) arrivano anche sugli altri dispositivi."/>
-
-        <TextBlock Text="Modello di trascrizione" Style="{StaticResource Label}"/>
-        <ComboBox x:Name="ModelBox" Margin="0,0,0,4"/>
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,16"
-                   Text="Si scarica una volta sola. Più è grande, più è preciso ma lento. Tutto resta sul PC."/>
-
-        <TextBlock Text="Lingua delle riunioni" Style="{StaticResource Label}"/>
-        <ComboBox x:Name="LanguageBox" Margin="0,0,0,16"/>
-
-        <CheckBox x:Name="AutoBox" Content="Trascrivi subito quando finisce la registrazione" Margin="0,0,0,8"/>
-        <CheckBox x:Name="SkipBox" Content="Trascrivi solo i tratti con voce (più veloce)" Margin="0,0,0,2"/>
-        <TextBlock Style="{StaticResource Hint}" Margin="24,0,0,10"
-                   Text="Se in una trascrizione manca del testo, toglilo e premi di nuovo Trascrivi."/>
-        <CheckBox x:Name="DesktopBox" Content="Apri l'app Claude per desktop (se no, claude.ai nel browser)" Margin="0,0,0,8"/>
-        <CheckBox x:Name="PasteBox" Content="Incolla da sola la richiesta in Claude (poi premi tu Invio)" Margin="0,0,0,20"/>
-
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        Title="Impostazioni – MeNoter" Width="640" Height="760" MinHeight="420"
+        Icon="/Assets/MeNoter.ico" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Background}" FontFamily="Segoe UI" FontSize="14" Foreground="{StaticResource Ink}">
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
             <Button Content="Annulla" Click="Cancel_Click"/>
-            <Button Content="Salva" Style="{StaticResource Primary}" Click="Save_Click"/>
+            <Button Content="Salva" Style="{StaticResource Primary}" Click="Save_Click" Margin="0,0,0,8"/>
         </StackPanel>
-    </StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Note" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <TextBlock Text="Cartella delle note" Style="{StaticResource Label}"/>
+                        <DockPanel Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Right" Content="Sfoglia…" Click="Browse_Click" Margin="8,0,0,0"/>
+                            <TextBox x:Name="FolderBox" Style="{StaticResource Field}"/>
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,8"
+                                   Text="Ogni nota è una cartella con audio, trascrizione e risposte di Claude."/>
+                        <Button Content="Crea l'icona di MeNoter sul Desktop e nel menu Start" Click="Shortcuts_Click"
+                                HorizontalAlignment="Left" Margin="0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Trascrizione" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <TextBlock Text="Modello" Style="{StaticResource Label}"/>
+                        <ComboBox x:Name="ModelBox" Margin="0,0,0,4"/>
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,12"
+                                   Text="Si scarica una volta sola. Più è grande, più è preciso ma lento. Tutto resta sul PC."/>
+                        <TextBlock Text="Lingua delle riunioni" Style="{StaticResource Label}"/>
+                        <ComboBox x:Name="LanguageBox" Margin="0,0,0,12"/>
+                        <CheckBox x:Name="AutoBox" Content="Trascrivi subito quando finisce la registrazione" Margin="0,0,0,8"/>
+                        <CheckBox x:Name="SkipBox" Content="Trascrivi solo i tratti con voce (più veloce)" Margin="0,0,0,2"/>
+                        <TextBlock Style="{StaticResource Hint}" Margin="24,0,0,0"
+                                   Text="Se in una trascrizione manca del testo, toglilo e premi di nuovo Trascrivi."/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Claude" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <CheckBox x:Name="DesktopBox" Content="Apri l'app Claude per desktop (se no, claude.ai nel browser)" Margin="0,0,0,8"/>
+                        <CheckBox x:Name="PasteBox" Content="Incolla da sola la richiesta in Claude (poi premi tu Invio)"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Sincronizzazione (facoltativa)" FontSize="17" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,12"
+                                   Text="Copia ogni nota (audio originale, tracce, trascrizione, risposte e immagini di Claude) nella cartella MeNoter del servizio scelto. Serve l'app del servizio sul PC (Google Drive per desktop, OneDrive, Box Drive): è lei a caricarla nel cloud. MeNoter non cancella mai niente nel cloud."/>
+                        <StackPanel x:Name="SyncPanel"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
 </Window>

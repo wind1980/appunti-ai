@@ -31,19 +31,37 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _work;
     private string? _lastClaudeFile;
 
+    // Sincronizzazione con Google Drive / OneDrive / Box (facoltativa).
+    private readonly DispatcherTimer _syncTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private bool _syncing;
+
     public MainWindow()
     {
         InitializeComponent();
         foreach (var r in ClaudeRequest.All)
         {
-            var b = new Button { Content = r.Label, Tag = r };
+            var content = new StackPanel();
+            content.Children.Add(new TextBlock { Text = r.Icon, FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center });
+            content.Children.Add(new TextBlock
+            {
+                Text = r.Label, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0),
+            });
+            var b = new Button { Content = content, Tag = r, Style = (Style)FindResource("Tile") };
             b.Click += Claude_Click;
             ClaudeButtons.Children.Add(b);
         }
+        _syncTimer.Tick += async (_, _) =>
+        {
+            _syncTimer.Stop();
+            await SyncAsync();
+        };
         _uiTimer.Tick += (_, _) => OnUiTick();
         _uiTimer.Start();
         LoadDevices();
         LoadNotes();
+        UpdateSyncButton();
+        RequestSync();
     }
 
     // ---------------- Dispositivi audio ----------------
@@ -262,6 +280,7 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "Registrazione salvata, ma non riesco a unire le tracce:\n" + ex.Message, "MeNoter");
         }
         LoadNotes(select: note);
+        RequestSync();
         if (_settings.AutoTranscribe) await TranscribeAsync(note);
     }
 
@@ -400,6 +419,7 @@ public partial class MainWindow : Window
             HideProgress();
             RefreshListItem(note);
             if (_current == note) ShowNote(note);
+            RequestSync();
         }
     }
 
@@ -496,6 +516,7 @@ public partial class MainWindow : Window
         }
         ShowNote(_current, selectFile: saved);
         ClaudeHint.Text = Note.IsImage(saved) ? $"Immagine salvata in «{label}»." : $"Risposta salvata come «{label}».";
+        RequestSync();
     }
 
     private string? PasteText(Note note, string label)
@@ -642,7 +663,9 @@ public partial class MainWindow : Window
         ContentTabs.SelectedItem = toSelect ?? ContentTabs.Items[0];
     }
 
-    private static TextBox TextView(string text, string search = "")
+    private const double BaseFontSize = 14.5;
+
+    private TextBox TextView(string text, string search = "")
     {
         var box = new TextBox
         {
@@ -652,7 +675,7 @@ public partial class MainWindow : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(4, 10, 4, 4),
-            FontSize = 14.5,
+            FontSize = BaseFontSize,
         };
         if (search.Length > 0)
         {
@@ -697,17 +720,74 @@ public partial class MainWindow : Window
         panel.Children.Add(bar);
         if (image)
         {
-            panel.Children.Add(new ScrollViewer
+            var source = LoadImage(file);
+            var img = new Image { Source = source, Stretch = System.Windows.Media.Stretch.Uniform };
+            var scroller = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = new Image { Source = LoadImage(file), Stretch = System.Windows.Media.Stretch.Uniform, MaxWidth = 1400 },
-            });
+                Content = img,
+                Margin = new Thickness(0, 6, 0, 0),
+            };
+            // Zoom dell'immagine: "Adatta" la fa stare nella finestra, − / + e Ctrl + rotellina la ingrandiscono.
+            double? scale = null; // null = adattata alla finestra
+            TextBlock? zoomText = null;
+            void Apply()
+            {
+                if (scale == null)
+                {
+                    img.Width = double.NaN;
+                    img.MaxWidth = Math.Max(100, scroller.ViewportWidth > 0 ? scroller.ViewportWidth : source.PixelWidth);
+                    zoomText!.Text = "Adatta";
+                }
+                else
+                {
+                    img.MaxWidth = double.PositiveInfinity;
+                    img.Width = source.PixelWidth * scale.Value;
+                    zoomText!.Text = $"{scale.Value * 100:0}%";
+                }
+            }
+            double Current() => scale ?? (img.ActualWidth > 0 ? img.ActualWidth / source.PixelWidth : 1.0);
+            void Zoom(double factor)
+            {
+                scale = factor <= 0 ? null : Math.Clamp(Current() * factor, 0.1, 6.0);
+                Apply();
+            }
+            var zoomBar = ZoomBar(out var zt, () => Zoom(1 / 1.2), () => Zoom(1.2), () => Zoom(0));
+            zoomText = zt;
+            bar.Children.Add(zoomBar);
+            scroller.PreviewMouseWheel += (_, e) =>
+            {
+                if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+                Zoom(e.Delta > 0 ? 1.1 : 1 / 1.1);
+                e.Handled = true;
+            };
+            scroller.SizeChanged += (_, _) => { if (scale == null) Apply(); };
+            scroller.Loaded += (_, _) => Apply();
+            panel.Children.Add(scroller);
         }
         else
         {
             panel.Children.Add(EditableView(file, "", "Puoi modificare il testo: si salva da solo."));
         }
+        return panel;
+    }
+
+    /// <summary>Piccola barra − 100% + per lo zoom.</summary>
+    private static StackPanel ZoomBar(out TextBlock label, Action minus, Action plus, Action reset)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var m = new Button { Content = "−", Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 4, 8), ToolTip = "Rimpicciolisci (Ctrl + rotellina)" };
+        var p = new Button { Content = "+", Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(4, 0, 0, 8), ToolTip = "Ingrandisci (Ctrl + rotellina)" };
+        var t = new TextBlock { MinWidth = 52, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 8), Cursor = Cursors.Hand, ToolTip = "Torna alla dimensione normale" };
+        m.Click += (_, _) => minus();
+        p.Click += (_, _) => plus();
+        t.MouseLeftButtonUp += (_, _) => reset();
+        panel.Children.Add(m);
+        panel.Children.Add(t);
+        panel.Children.Add(p);
+        label = t;
         return panel;
     }
 
@@ -727,6 +807,7 @@ public partial class MainWindow : Window
     private UIElement EditableView(string path, string search, string hint)
     {
         var box = TextView(File.ReadAllText(path), search);
+        box.FontSize = BaseFontSize * _settings.TextZoom;
         box.IsReadOnly = false;
         box.AcceptsReturn = true;
         box.AcceptsTab = true;
@@ -742,6 +823,7 @@ public partial class MainWindow : Window
                 File.WriteAllText(path, box.Text);
                 saved = box.Text;
                 status.Text = "Modifiche salvate alle " + DateTime.Now.ToString("HH:mm:ss");
+                RequestSync();
             }
             catch (Exception ex)
             {
@@ -756,9 +838,32 @@ public partial class MainWindow : Window
         };
         box.LostFocus += (_, _) => Save();
         box.Unloaded += (_, _) => Save();
+        // Zoom del testo: pulsanti − / + e Ctrl + rotellina del mouse. Resta uguale per tutte le note.
+        TextBlock zoomText = new();
+        void Zoom(double factor)
+        {
+            _settings.TextZoom = factor <= 0 ? 1.0 : Math.Clamp(_settings.TextZoom * factor, 0.6, 3.0);
+            box.FontSize = BaseFontSize * _settings.TextZoom;
+            zoomText.Text = $"{_settings.TextZoom * 100:0}%";
+            _settings.Save();
+        }
+        var top = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+        var zoomBar = ZoomBar(out zoomText, () => Zoom(1 / 1.15), () => Zoom(1.15), () => Zoom(0));
+        zoomText.Text = $"{_settings.TextZoom * 100:0}%";
+        DockPanel.SetDock(zoomBar, Dock.Right);
+        top.Children.Add(zoomBar);
+        status.Margin = new Thickness(0);
+        status.VerticalAlignment = VerticalAlignment.Center;
+        top.Children.Add(status);
+        box.PreviewMouseWheel += (_, e) =>
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+            Zoom(e.Delta > 0 ? 1.1 : 1 / 1.1);
+            e.Handled = true;
+        };
         var panel = new DockPanel();
-        DockPanel.SetDock(status, Dock.Top);
-        panel.Children.Add(status);
+        DockPanel.SetDock(top, Dock.Top);
+        panel.Children.Add(top);
         panel.Children.Add(box);
         return panel;
     }
@@ -835,10 +940,64 @@ public partial class MainWindow : Window
         LoadNotes();
     }
 
+    // ---------------- Sincronizzazione ----------------
+
+    /// <summary>Sincronizza qualche secondo dopo l'ultima modifica (più modifiche vicine = una sola copia).</summary>
+    private void RequestSync()
+    {
+        if (_settings.SyncEnabled.Count == 0) return;
+        _syncTimer.Stop();
+        _syncTimer.Start();
+    }
+
+    private void UpdateSyncButton()
+    {
+        var targets = CloudSync.Targets(_settings);
+        SyncButton.Visibility = targets.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (targets.Count > 0 && !_syncing) SyncText.Text = "☁  " + string.Join(", ", targets.Select(t => t.Name));
+    }
+
+    private async void SyncNow_Click(object sender, RoutedEventArgs e) => await SyncAsync();
+
+    private async Task SyncAsync()
+    {
+        var targets = CloudSync.Targets(_settings);
+        if (targets.Count == 0 || _syncing) return;
+        _syncing = true;
+        SyncText.Text = "☁  Sincronizzo…";
+        var root = _settings.ResolveNotesFolder();
+        var skip = _recordingNote?.Folder;
+        try
+        {
+            var result = await Task.Run(() => CloudSync.Run(root, targets, skip, CancellationToken.None));
+            var names = string.Join(", ", targets.Select(t => t.Name));
+            SyncText.Text = result.Errors.Count == 0
+                ? $"☁  {names} · aggiornato alle {DateTime.Now:HH:mm}"
+                : "⚠  Sincronizzazione incompleta";
+            SyncButton.ToolTip = result.Errors.Count == 0
+                ? $"{result.Copied} file copiati nell'ultima sincronizzazione. Clic per sincronizzare adesso."
+                : string.Join("\n", result.Errors);
+        }
+        catch (Exception ex)
+        {
+            SyncText.Text = "⚠  Sincronizzazione non riuscita";
+            SyncButton.ToolTip = ex.Message;
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         var w = new SettingsWindow(_settings) { Owner = this };
-        if (w.ShowDialog() == true) LoadNotes();
+        if (w.ShowDialog() == true)
+        {
+            LoadNotes();
+            UpdateSyncButton();
+            RequestSync();
+        }
     }
 
     private void Window_Closing(object? sender, CancelEventArgs e)

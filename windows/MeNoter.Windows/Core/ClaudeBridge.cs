@@ -5,6 +5,19 @@ namespace MeNoter.Core;
 /// <summary>Richiesta a Claude: stessi comandi dell'app Android, così le risposte sono uguali.</summary>
 public record ClaudeRequest(string Key, string Label, string Prompt)
 {
+    /// <summary>Icona del riquadro, come nella barra dell'app Android.</summary>
+    public string Icon => Key switch
+    {
+        "summary" => "✨",
+        "actions" => "☑",
+        "speakers" => "👥",
+        "mindmap" => "🧭",
+        "infographic" => "📊",
+        "email" => "✉",
+        "translate" => "🌐",
+        _ => "💬",
+    };
+
     private const string NoChatter =
         "Rispondi solo con il contenuto richiesto: niente frasi introduttive, niente commenti, proposte o domande alla fine.";
 
