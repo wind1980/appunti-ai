@@ -29,6 +29,15 @@ public class Settings
     /// <summary>Trascrive solo i tratti con voce (più veloce). Se manca del testo, si disattiva.</summary>
     public bool SkipSilence { get; set; } = true;
 
+    /// <summary>Servizi su cui copiare le note: "google", "onedrive", "box" (vuoto = nessuna sincronizzazione).</summary>
+    public List<string> SyncEnabled { get; set; } = new();
+
+    /// <summary>Cartella scelta a mano per un servizio (se vuota si usa quella trovata da sola).</summary>
+    public Dictionary<string, string> SyncFolders { get; set; } = new();
+
+    /// <summary>Ingrandimento del testo di risposte e trascrizione (1 = normale).</summary>
+    public double TextZoom { get; set; } = 1.0;
+
     /// <summary>Trascrive da sola appena finisce la registrazione.</summary>
     public bool AutoTranscribe { get; set; } = true;
 

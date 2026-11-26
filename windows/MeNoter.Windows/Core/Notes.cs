@@ -97,6 +97,9 @@ public class Note
         }
     }
 
+    /// <summary>Icona nell'elenco: chiamata registrata (due tracce) o audio importato.</summary>
+    public string Icon => Meta.Status == "registrazione" ? "🔴" : Meta.TwoTracks ? "🎧" : "🎵";
+
     public override string ToString() => Meta.Title;
 }
 
