@@ -1,0 +1,48 @@
+name: Compila MeNoter Windows
+
+on:
+  push:
+    # Ogni ramo viene compilato quando cambia la parte Windows; la release esce solo da main.
+    paths:
+      - "windows/**"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Compila
+        run: dotnet publish windows/MeNoter.Windows/MeNoter.Windows.csproj -c Release -o out
+
+      - name: Crea lo zip
+        shell: pwsh
+        run: Compress-Archive -Path out/* -DestinationPath MeNoter-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeNoter-Windows
+          path: MeNoter-Windows.zip
+
+      # Release fissa "windows": il link resta sempre lo stesso e non tocca quella dell'APK.
+      - name: Pubblica release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows
+          name: MeNoter per Windows
+          body: |
+            Ultima versione di MeNoter per Windows (commit ${{ github.sha }}).
+            Scarica MeNoter-Windows.zip, estrai la cartella e avvia MeNoter.exe.
+          files: MeNoter-Windows.zip
+          make_latest: false

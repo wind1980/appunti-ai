@@ -3,6 +3,10 @@ name: Compila APK
 on:
   push:
     branches: [main]
+    # Le modifiche alla sola app Windows non producono un nuovo APK.
+    paths-ignore:
+      - "windows/**"
+      - ".github/workflows/build-windows.yml"
   workflow_dispatch:
 
 permissions:

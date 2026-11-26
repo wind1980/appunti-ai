@@ -1,0 +1,147 @@
+<Window x:Class="MeNoter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MeNoter" Width="1200" Height="800" MinWidth="960" MinHeight="620"
+        Background="#F5F6FB" FontFamily="Segoe UI" FontSize="14"
+        Closing="Window_Closing">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Registrazione della chiamata -->
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                    <TextBlock Text="🎙  Microfono (la tua voce)" Style="{StaticResource Label}"/>
+                    <ComboBox x:Name="MicBox" SelectionChanged="Device_Changed"/>
+                    <ProgressBar x:Name="MicLevel" Height="6" Maximum="1" Margin="0,8,0,0"
+                                 Foreground="#16A36A" Background="#E9EBF3" BorderThickness="0"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="0,0,16,0">
+                    <TextBlock Text="🎧  Audio della chiamata (casse, cuffie, auricolari)" Style="{StaticResource Label}"/>
+                    <ComboBox x:Name="OutBox" SelectionChanged="Device_Changed"/>
+                    <ProgressBar x:Name="OutLevel" Height="6" Maximum="1" Margin="0,8,0,0"
+                                 Foreground="#4255FF" Background="#E9EBF3" BorderThickness="0"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                    <Button x:Name="TestButton" Content="Prova audio" Click="Test_Click"/>
+                    <Button Content="↻ Aggiorna" Click="RefreshDevices_Click" Margin="0"/>
+                </StackPanel>
+
+                <DockPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,14,0,0" LastChildFill="True">
+                    <Button x:Name="RecordButton" DockPanel.Dock="Left" Style="{StaticResource Danger}"
+                            Content="●  Registra" Click="Record_Click" Margin="0,0,8,0"/>
+                    <Button x:Name="PauseButton" DockPanel.Dock="Left" Content="❚❚  Pausa" Click="Pause_Click"
+                            IsEnabled="False" Margin="0,0,8,0"/>
+                    <Button x:Name="StopButton" DockPanel.Dock="Left" Content="■  Fine" Click="Stop_Click"
+                            IsEnabled="False" Margin="0,0,16,0"/>
+                    <TextBlock x:Name="TimerText" DockPanel.Dock="Left" Text="00:00" FontSize="22" FontWeight="SemiBold"
+                               VerticalAlignment="Center" Margin="0,0,16,0" MinWidth="70"/>
+                    <TextBlock DockPanel.Dock="Left" Text="Titolo:" VerticalAlignment="Center" Margin="0,0,8,0"
+                               Foreground="{StaticResource Muted}"/>
+                    <TextBox x:Name="NewTitleBox" VerticalContentAlignment="Center" Padding="6"
+                             ToolTip="Facoltativo: se lo lasci vuoto la nota si chiama 'Riunione' con la data"/>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="330"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Elenco note -->
+            <Border Style="{StaticResource Card}" Margin="0,0,12,0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Note" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <TextBox x:Name="SearchBox" DockPanel.Dock="Top" Padding="6" Margin="0,0,0,8"
+                             TextChanged="Search_Changed" ToolTip="Cerca nei titoli e nelle trascrizioni"/>
+                    <WrapPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                        <Button Content="Importa audio…" Click="Import_Click"/>
+                        <Button Content="Impostazioni" Click="Settings_Click"/>
+                        <Button Content="Cartella" Click="OpenRoot_Click"/>
+                    </WrapPanel>
+                    <ListBox x:Name="NotesList" SelectionChanged="Notes_SelectionChanged" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Apri cartella" Click="OpenFolder_Click"/>
+                                <MenuItem Header="Sposta nel cestino di MeNoter" Click="Delete_Click"/>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="4,6">
+                                    <TextBlock Text="{Binding Meta.Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Subtitle}" FontSize="12" Foreground="#6E6E7D"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <!-- Nota aperta -->
+            <Border Grid.Column="1" Style="{StaticResource Card}">
+                <Grid>
+                    <TextBlock x:Name="EmptyText" Style="{StaticResource Hint}" FontSize="14" VerticalAlignment="Center"
+                               HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="460"
+                               Text="Scegli il microfono e l'uscita audio della chiamata (se usi auricolari o cuffie Bluetooth, scegli quelli), premi Registra all'inizio della riunione e Fine alla fine. MeNoter trascrive sul PC e poi puoi mandare tutto a Claude."/>
+                    <DockPanel x:Name="DetailPanel" Visibility="Collapsed">
+                        <StackPanel DockPanel.Dock="Top">
+                            <TextBox x:Name="TitleBox" FontSize="20" FontWeight="SemiBold" BorderThickness="0,0,0,1"
+                                     Padding="0,2" LostFocus="Title_LostFocus" KeyDown="Title_KeyDown"/>
+                            <TextBlock x:Name="SubtitleText" Style="{StaticResource Hint}" Margin="0,4,0,8"/>
+                            <WrapPanel>
+                                <Button x:Name="TranscribeButton" Content="Trascrivi" Click="Transcribe_Click"/>
+                                <Button Content="▶ Ascolta" Click="Play_Click"/>
+                                <Button Content="Apri cartella" Click="OpenFolder_Click"/>
+                            </WrapPanel>
+                            <StackPanel x:Name="ProgressPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                <TextBlock x:Name="ProgressText" Style="{StaticResource Hint}" Margin="0,0,0,4"/>
+                                <ProgressBar x:Name="TaskProgress" Height="6" Maximum="1" Foreground="#4255FF"
+                                             Background="#E9EBF3" BorderThickness="0"/>
+                            </StackPanel>
+
+                            <Border Background="#F7F8FE" CornerRadius="12" Padding="12" Margin="0,4,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="✦  Chiedi a Claude (con il tuo account Pro)" Style="{StaticResource Label}"/>
+                                    <WrapPanel x:Name="ClaudeButtons"/>
+                                    <DockPanel Margin="0,0,0,8">
+                                        <Button DockPanel.Dock="Right" Content="Chiedi" Style="{StaticResource Primary}"
+                                                Click="Ask_Click" Margin="8,0,0,0"/>
+                                        <TextBox x:Name="AskBox" Padding="6" VerticalContentAlignment="Center"
+                                                 ToolTip="Una domanda libera sulla riunione"/>
+                                    </DockPanel>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Left" Content="📋  Incolla risposta di Claude"
+                                                Style="{StaticResource Primary}" Click="Paste_Click" Margin="0,0,12,0"/>
+                                        <TextBlock x:Name="ClaudeHint" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                   Text="Il pulsante prepara un file con richiesta e trascrizione e lo copia: in Claude premi Ctrl+V e Invio. Poi copia la risposta di Claude e premi «Incolla risposta»."/>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <TabControl x:Name="ContentTabs" BorderThickness="0,1,0,0" Background="White"/>
+                    </DockPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
