@@ -99,6 +99,18 @@
                              Tag="🔍  Cerca nei titoli e nelle trascrizioni" TextChanged="Search_Changed"/>
                     <Button DockPanel.Dock="Bottom" Content="＋  Importa audio o video…" Click="Import_Click"
                             Margin="0,10,0,0" HorizontalAlignment="Stretch"/>
+                    <!-- Trascrizione in corso: resta visibile qualunque nota sia aperta -->
+                    <Border x:Name="BusyPanel" DockPanel.Dock="Bottom" Visibility="Collapsed" Margin="0,10,0,0" Padding="12"
+                            CornerRadius="14" Background="{StaticResource BrandSoft}" Cursor="Hand"
+                            MouseLeftButtonUp="BusyPanel_Click" ToolTip="Apri la nota">
+                        <StackPanel>
+                            <TextBlock x:Name="BusyTitle" FontWeight="SemiBold" Foreground="{StaticResource OnBrandSoft}"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="BusyText" Style="{StaticResource Hint}" Margin="0,2,0,6" TextTrimming="CharacterEllipsis"/>
+                            <ProgressBar x:Name="BusyProgress" Style="{StaticResource Level}"
+                                         Foreground="{StaticResource Brand}" Background="White"/>
+                        </StackPanel>
+                    </Border>
                     <ListBox x:Name="NotesList" SelectionChanged="Notes_SelectionChanged" BorderThickness="0"
                              Background="Transparent" ItemContainerStyle="{StaticResource NoteItem}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -140,51 +152,75 @@
                                    Text="Scegli il microfono e l'uscita audio della chiamata (con auricolari o cuffie Bluetooth scegli quelli), premi Registra all'inizio della riunione e Fine alla fine. MeNoter trascrive sul PC e poi chiedi a Claude riassunti, azioni e mappe."/>
                     </StackPanel>
 
-                    <DockPanel x:Name="DetailPanel" Visibility="Collapsed">
-                        <StackPanel DockPanel.Dock="Top">
-                            <TextBox x:Name="TitleBox" FontSize="22" FontWeight="Bold" BorderThickness="0,0,0,1"
-                                     BorderBrush="{StaticResource Line}" Background="Transparent" Padding="0,2"
-                                     LostFocus="Title_LostFocus" KeyDown="Title_KeyDown"/>
-                            <TextBlock x:Name="SubtitleText" Style="{StaticResource Hint}" Margin="0,6,0,10"/>
-                            <WrapPanel>
-                                <Button x:Name="TranscribeButton" Content="✎  Trascrivi" Click="Transcribe_Click"/>
-                                <Button Content="▶  Ascolta" Click="Play_Click"/>
-                                <Button Content="📂  Cartella" Click="OpenFolder_Click"/>
-                            </WrapPanel>
-                            <StackPanel x:Name="ProgressPanel" Visibility="Collapsed" Margin="0,0,0,10">
-                                <TextBlock x:Name="ProgressText" Style="{StaticResource Hint}" Margin="0,0,0,6"/>
-                                <ProgressBar x:Name="TaskProgress" Style="{StaticResource Level}"
-                                             Foreground="{StaticResource Brand}" Background="{StaticResource SurfaceHigh}"/>
+                    <!-- Tutta la nota scorre: con la finestra piccola le risposte hanno sempre spazio -->
+                    <ScrollViewer x:Name="DetailPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" SizeChanged="DetailLayout_Changed">
+                        <Grid x:Name="DetailGrid">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel x:Name="DetailHeader" SizeChanged="DetailLayout_Changed" Margin="0,0,6,0">
+                                <TextBox x:Name="TitleBox" FontSize="22" FontWeight="Bold" BorderThickness="0,0,0,1"
+                                         BorderBrush="{StaticResource Line}" Background="Transparent" Padding="0,2"
+                                         LostFocus="Title_LostFocus" KeyDown="Title_KeyDown"/>
+                                <TextBlock x:Name="SubtitleText" Style="{StaticResource Hint}" Margin="0,6,0,10"/>
+                                <WrapPanel>
+                                    <Button x:Name="TranscribeButton" Content="✎  Trascrivi" Click="Transcribe_Click"/>
+                                    <Button Content="▶  Ascolta" Click="Play_Click"/>
+                                    <Button Content="📂  Cartella" Click="OpenFolder_Click"/>
+                                </WrapPanel>
+                                <Border x:Name="ProgressPanel" Visibility="Collapsed" Margin="0,0,0,10" Padding="12"
+                                        CornerRadius="14" Background="{StaticResource BrandSoft}">
+                                    <StackPanel>
+                                        <TextBlock x:Name="ProgressText" FontWeight="SemiBold" Foreground="{StaticResource OnBrandSoft}"
+                                                   TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                        <ProgressBar x:Name="TaskProgress" Style="{StaticResource Level}"
+                                                     Foreground="{StaticResource Brand}" Background="White"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Background="{StaticResource SurfaceHigh}" CornerRadius="18" Padding="14" Margin="0,4,0,12">
+                                    <StackPanel>
+                                        <DockPanel Margin="0,0,0,8">
+                                            <Button x:Name="ClaudeToggle" DockPanel.Dock="Right" Style="{StaticResource Ghost}"
+                                                    Content="Nascondi comandi ▴" Click="ClaudeToggle_Click" Margin="0"/>
+                                            <TextBlock Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0">
+                                                <Run Text="✦" Foreground="{StaticResource Violet}"/>
+                                                <Run Text=" Chiedi a Claude (con il tuo account Pro)"/>
+                                            </TextBlock>
+                                        </DockPanel>
+                                        <StackPanel x:Name="ClaudeBody">
+                                            <WrapPanel x:Name="ClaudeButtons"/>
+                                            <DockPanel Margin="0,2,0,10">
+                                                <Button DockPanel.Dock="Right" Content="Chiedi" Style="{StaticResource Primary}"
+                                                        Click="Ask_Click" Margin="8,0,0,0"/>
+                                                <TextBox x:Name="AskBox" Style="{StaticResource Field}"
+                                                         Tag="Fai una domanda sulla riunione…"/>
+                                            </DockPanel>
+                                        </StackPanel>
+                                        <!-- Richieste mandate a Claude di cui non è ancora stata incollata la risposta -->
+                                        <StackPanel x:Name="PendingBox" Visibility="Collapsed" Margin="0,0,0,8">
+                                            <TextBlock Text="In attesa della risposta di Claude (clic per incollarla lì):"
+                                                       Style="{StaticResource Hint}" Margin="0,0,0,6"/>
+                                            <WrapPanel x:Name="PendingPanel"/>
+                                        </StackPanel>
+                                        <DockPanel>
+                                            <Button x:Name="PasteButton" DockPanel.Dock="Left" Content="📋  Incolla risposta…"
+                                                    Style="{StaticResource Primary}" Click="Paste_Click" Margin="0,0,8,0"/>
+                                            <Button x:Name="RevealButton" DockPanel.Dock="Left" Content="Mostra il file"
+                                                    Click="Reveal_Click" Margin="0,0,12,0" Visibility="Collapsed"
+                                                    ToolTip="Il testo completo inviato a Claude, da trascinare nella chat se serve"/>
+                                            <TextBlock x:Name="ClaudeHint" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                       Text="Ogni comando apre Claude con la trascrizione allegata e il comando già scritto: tu premi Invio. Poi in Claude copia la risposta (testo o immagine) e premi «Incolla risposta»: scegli tu a quale richiesta appartiene."/>
+                                        </DockPanel>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
 
-                            <Border Background="{StaticResource SurfaceHigh}" CornerRadius="18" Padding="14" Margin="0,4,0,12">
-                                <StackPanel>
-                                    <TextBlock Style="{StaticResource Label}" Margin="0,0,0,10">
-                                        <Run Text="✦" Foreground="{StaticResource Violet}"/>
-                                        <Run Text=" Chiedi a Claude (con il tuo account Pro)"/>
-                                    </TextBlock>
-                                    <WrapPanel x:Name="ClaudeButtons"/>
-                                    <DockPanel Margin="0,2,0,10">
-                                        <Button DockPanel.Dock="Right" Content="Chiedi" Style="{StaticResource Primary}"
-                                                Click="Ask_Click" Margin="8,0,0,0"/>
-                                        <TextBox x:Name="AskBox" Style="{StaticResource Field}"
-                                                 Tag="Fai una domanda sulla riunione…"/>
-                                    </DockPanel>
-                                    <DockPanel>
-                                        <Button DockPanel.Dock="Left" Content="📋  Incolla risposta (testo o immagine)"
-                                                Style="{StaticResource Primary}" Click="Paste_Click" Margin="0,0,8,0"/>
-                                        <Button x:Name="RevealButton" DockPanel.Dock="Left" Content="Mostra il file"
-                                                Click="Reveal_Click" Margin="0,0,12,0" Visibility="Collapsed"
-                                                ToolTip="Il testo completo inviato a Claude, da trascinare nella chat se serve"/>
-                                        <TextBlock x:Name="ClaudeHint" Style="{StaticResource Hint}" VerticalAlignment="Center"
-                                                   Text="Ogni comando apre Claude con la trascrizione allegata e il comando già scritto: tu premi Invio. Poi copia la risposta di Claude (testo o immagine) e premi «Incolla risposta»."/>
-                                    </DockPanel>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
-
-                        <TabControl x:Name="ContentTabs"/>
-                    </DockPanel>
+                            <TabControl x:Name="ContentTabs" Grid.Row="1" Margin="0,0,6,0"/>
+                        </Grid>
+                    </ScrollViewer>
                 </Grid>
             </Border>
         </Grid>

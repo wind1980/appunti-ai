@@ -14,8 +14,18 @@ public class NoteMeta
     public string? OutputName { get; set; }
     /// <summary>Ultima richiesta mandata a Claude (per dare il nome alla risposta incollata).</summary>
     public string? LastRequest { get; set; }
+    /// <summary>Richieste mandate a Claude di cui non è ancora stata incollata la risposta.</summary>
+    public List<PendingRequest> Pending { get; set; } = new();
+
     /// <summary>True se ci sono le due tracce separate (Io / Altri).</summary>
     public bool TwoTracks { get; set; }
+}
+
+/// <summary>Richiesta a Claude in attesa di risposta (per sapere dove incollare).</summary>
+public class PendingRequest
+{
+    public string Label { get; set; } = "";
+    public DateTime SentAt { get; set; } = DateTime.Now;
 }
 
 /// <summary>
