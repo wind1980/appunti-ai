@@ -34,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -58,6 +59,7 @@ import it.edoardo.appunti.whisper.Models
 import it.edoardo.appunti.whisper.WhisperNative
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import it.edoardo.appunti.audio.CallMonitor
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -120,6 +122,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item { CallSettings() }
+            item { HorizontalDivider() }
             item {
                 Text("Modelli di trascrizione", style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -448,3 +452,62 @@ private val DEFAULT_TEMPLATES = listOf(
             "una riga per punto, ognuna con il minuto [mm:ss].",
     ),
 )
+
+/**
+ * Registrazione delle chiamate (Teams, WhatsApp, Meet, Webex, telefono): servizio di accessibilità,
+ * proposta di registrare a inizio chiamata e vivavoce automatico.
+ */
+@Composable
+private fun CallSettings() {
+    val context = LocalContext.current
+    val prefs = context.app.prefs
+    var a11y by remember { mutableStateOf(CallMonitor.accessibilityOn(context)) }
+    // Si ricontrolla di continuo: l'utente lo attiva nelle impostazioni di Android e torna qui.
+    LaunchedEffect(Unit) {
+        while (true) {
+            a11y = CallMonitor.accessibilityOn(context)
+            delay(1500)
+        }
+    }
+    var offer by remember { mutableStateOf(prefs.offerCallRecording) }
+    var autoSpeaker by remember { mutableStateOf(prefs.autoSpeaker) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Registrare le chiamate", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Teams, WhatsApp, Meet, Webex, Zoom e telefono. Durante una chiamata Android lascia usare il microfono solo " +
+                "all'app della chiamata e ai servizi di accessibilità: per questo MeNoter ne ha uno, che non legge e non " +
+                "tocca nulla sullo schermo. La voce degli altri si registra solo quando esce dal vivavoce: con auricolare, " +
+                "cuffie, auricolari Bluetooth o auto Android non la lascia prendere a nessuna app.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (a11y) {
+            Text("✓ Servizio di accessibilità attivo", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        } else {
+            Button(onClick = { context.startActivity(CallMonitor.accessibilitySettings()) }) {
+                Text("Attiva «MeNoter – registrazione delle chiamate»")
+            }
+            Text(
+                "Se l'interruttore è grigio (Android 13 e successivi, app installata fuori dal Play Store): " +
+                    "Impostazioni › App › MeNoter › menu ⋮ in alto › «Consenti impostazioni con limitazioni», poi riprova.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = { context.startActivity(CallMonitor.appDetails(context)) }) { Text("Apri le informazioni di MeNoter") }
+        }
+        SwitchRow(
+            title = "Proponi di registrare quando inizia una chiamata",
+            subtitle = "Una notifica con il pulsante Registra (serve il servizio di accessibilità).",
+            checked = offer,
+            onChange = { offer = it; prefs.offerCallRecording = it },
+        )
+        SwitchRow(
+            title = "Vivavoce automatico nelle chiamate registrate",
+            subtitle = "Con auricolare, cuffie o Bluetooth passa da solo al vivavoce per registrare anche gli altri " +
+                "(in auto l'audio esce dal telefono, non dalle casse). Se è spento arriva un avviso con il pulsante Vivavoce. " +
+                "A fine chiamata si torna come prima.",
+            checked = autoSpeaker,
+            onChange = { autoSpeaker = it; prefs.autoSpeaker = it },
+        )
+    }
+}

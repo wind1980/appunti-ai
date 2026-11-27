@@ -30,6 +30,26 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        /** Dalla notifica "Chiamata in corso": avvia la registrazione della chiamata. */
+        const val ACTION_RECORD_CALL = "it.edoardo.appunti.RECORD_CALL"
+        const val EXTRA_CALL_APP = "call_app"
+    }
+
+    /** Avvia la registrazione dalla notifica della chiamata (l'app è in primo piano, quindi Android lo permette). */
+    private fun recordCall(intent: Intent) {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Prima consenti a MeNoter di usare il microfono: premi Registra una volta dall'app.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (RecorderService.state.value !is RecState.Idle) return
+        val appName = intent.getStringExtra(EXTRA_CALL_APP)
+        RecorderService.start(this, "Chiamata" + (appName?.let { " $it" } ?: ""))
+        Toast.makeText(this, "Registrazione della chiamata avviata: puoi tornare alla chiamata.", Toast.LENGTH_LONG).show()
+        // Si torna subito alla chiamata: la registrazione continua in background.
+        moveTaskToBack(true)
+    }
+
     /** Nota da aprire appena importato un audio condiviso. */
     private val openNote = mutableStateOf<Long?>(null)
 
@@ -113,6 +133,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleShare(intent: Intent?) {
+        if (intent?.action == ACTION_RECORD_CALL) {
+            recordCall(intent)
+            return
+        }
         if (intent?.action != Intent.ACTION_SEND) return
         val uri: Uri = (if (Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)

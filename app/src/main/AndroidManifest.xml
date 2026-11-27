@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Vivavoce durante le chiamate registrate (pulsante nella notifica o automatico). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Serve per poter aprire direttamente l'app Claude (Android 11+). -->
     <queries>
@@ -76,6 +78,21 @@
             android:name=".audio.RecorderService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Servizio di accessibilità: durante le chiamate Android lascia registrare dal microfono
+             solo l'app della chiamata e i servizi di accessibilità. -->
+        <service
+            android:name=".audio.CallCaptureService"
+            android:exported="true"
+            android:label="@string/a11y_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/call_capture_service" />
+        </service>
 
         <!-- WorkManager: la trascrizione lunga gira come servizio in primo piano. -->
         <service
