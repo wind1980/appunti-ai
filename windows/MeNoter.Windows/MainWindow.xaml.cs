@@ -29,6 +29,8 @@ public partial class MainWindow : Window
     // Trascrizione in corso (una alla volta).
     private Note? _busyNote;
     private CancellationTokenSource? _work;
+    private string _busyText = "";
+    private double _busyValue;
     private string? _lastClaudeFile;
 
     // Sincronizzazione con Google Drive / OneDrive / Box (facoltativa).
@@ -58,6 +60,7 @@ public partial class MainWindow : Window
         };
         _uiTimer.Tick += (_, _) => OnUiTick();
         _uiTimer.Start();
+        ApplyClaudeCollapsed();
         LoadDevices();
         LoadNotes();
         UpdateSyncButton();
@@ -416,6 +419,7 @@ public partial class MainWindow : Window
         {
             _busyNote = null;
             _work = null;
+            BusyPanel.Visibility = Visibility.Collapsed;
             HideProgress();
             RefreshListItem(note);
             if (_current == note) ShowNote(note);
@@ -423,19 +427,36 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Avanzamento della trascrizione: sempre nel riquadro sopra l'elenco delle note, e nella nota
+    /// quando è aperta (anche se ci si torna dopo essere passati ad altre note).
+    /// </summary>
     private void ShowProgress(Note note, string text, double value)
     {
+        _busyText = text;
+        _busyValue = value;
+        BusyPanel.Visibility = Visibility.Visible;
+        BusyTitle.Text = "✎  " + note.Meta.Title;
+        BusyText.Text = $"{text}  {value * 100:0}%";
+        BusyProgress.Value = value;
         if (_current != note) return;
         ProgressPanel.Visibility = Visibility.Visible;
-        ProgressText.Text = text;
+        ProgressText.Text = $"{text}  {value * 100:0}%";
         TaskProgress.Value = value;
-        TranscribeButton.Content = "Annulla";
+        TranscribeButton.Content = "✕  Annulla trascrizione";
     }
 
     private void HideProgress()
     {
         ProgressPanel.Visibility = Visibility.Collapsed;
-        TranscribeButton.Content = "Trascrivi";
+        TranscribeButton.Content = "✎  Trascrivi";
+    }
+
+    private void BusyPanel_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (_busyNote == null) return;
+        SearchBox.Text = "";
+        LoadNotes(select: _busyNote);
     }
 
     // ---------------- Claude ----------------
@@ -470,16 +491,19 @@ public partial class MainWindow : Window
             var note = _current;
             var file = ClaudeBridge.PrepareFile(note, request);
             note.Meta.LastRequest = request.Label;
+            note.Meta.Pending.RemoveAll(p => p.Label == request.Label);
+            note.Meta.Pending.Add(new PendingRequest { Label = request.Label, SentAt = DateTime.Now });
             note.Save();
+            UpdatePending(note);
             _lastClaudeFile = file;
             RevealButton.Visibility = Visibility.Visible;
             ClaudeHint.Text = $"«{request.Label}»: apro Claude…";
             bool pasted = await ClaudeBridge.SendAsync(note, request, _settings.OpenClaudeDesktop, _settings.AutoPaste);
             ClaudeHint.Text = pasted
                 ? $"«{request.Label}»: in Claude c'è la trascrizione come allegato e il comando nel messaggio: controlla e premi Invio. " +
-                  "Quando risponde, copia la risposta e premi «Incolla risposta di Claude»."
+                  "Quando risponde, copia la risposta e premi «Incolla risposta» (o il riquadro qui sopra)."
                 : $"«{request.Label}»: richiesta e trascrizione sono negli Appunti. In Claude premi Ctrl+V e Invio. " +
-                  "Quando risponde, copia la risposta e premi «Incolla risposta di Claude».";
+                  "Quando risponde, copia la risposta e premi «Incolla risposta» (o il riquadro qui sopra).";
         }
         catch (Exception ex)
         {
@@ -492,15 +516,79 @@ public partial class MainWindow : Window
         if (_lastClaudeFile != null && File.Exists(_lastClaudeFile)) ClaudeBridge.Reveal(_lastClaudeFile);
     }
 
-    /// <summary>Incolla l'ultima cosa copiata da Claude: un'immagine (mappa, infografica…) o un testo.</summary>
+    // ---------------- Incolla la risposta di Claude ----------------
+
+    /// <summary>
+    /// "Incolla risposta…": un menu che mostra cosa c'è negli Appunti (testo o immagine) e chiede a quale
+    /// richiesta appartiene. In cima le richieste ancora in attesa, poi tutti i tipi.
+    /// </summary>
     private void Paste_Click(object sender, RoutedEventArgs e)
     {
         if (_current == null) return;
-        var label = _current.Meta.LastRequest ?? "Risposta";
-        string? saved = null;
+        var note = _current;
+        var menu = new ContextMenu { PlacementTarget = PasteButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var preview = ClipboardPreview();
+        menu.Items.Add(new MenuItem
+        {
+            Header = preview == null ? "Negli Appunti non c'è niente: in Claude premi «Copia» sotto la risposta" : "Negli Appunti: " + preview,
+            IsEnabled = false,
+        });
+        if (preview != null)
+        {
+            if (note.Meta.Pending.Count > 0)
+            {
+                menu.Items.Add(new Separator());
+                menu.Items.Add(new MenuItem { Header = "In attesa da Claude", IsEnabled = false, FontWeight = FontWeights.SemiBold });
+                foreach (var p in note.Meta.Pending.OrderByDescending(p => p.SentAt))
+                    menu.Items.Add(PasteItem(note, $"⏳  {p.Label}   (chiesta alle {p.SentAt:HH:mm})", p.Label, bold: true));
+            }
+            menu.Items.Add(new Separator());
+            menu.Items.Add(new MenuItem { Header = "Salva come", IsEnabled = false, FontWeight = FontWeights.SemiBold });
+            foreach (var r in ClaudeRequest.All) menu.Items.Add(PasteItem(note, $"{r.Icon}  {r.Label}", r.Label));
+            menu.Items.Add(PasteItem(note, "💬  Domanda", "Domanda"));
+            menu.Items.Add(PasteItem(note, "📄  Altro", "Risposta"));
+        }
+        menu.IsOpen = true;
+    }
+
+    private MenuItem PasteItem(Note note, string header, string label, bool bold = false)
+    {
+        var item = new MenuItem { Header = header, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal };
+        item.Click += (_, _) => PasteAs(note, label);
+        return item;
+    }
+
+    /// <summary>Cosa c'è negli Appunti, in breve (null se niente di utile).</summary>
+    private static string? ClipboardPreview()
+    {
         try
         {
-            saved = PasteImage(_current, label) ?? PasteText(_current, label);
+            if (Clipboard.ContainsFileDropList())
+            {
+                var images = Clipboard.GetFileDropList().Cast<string>().Where(Note.IsImage).ToList();
+                if (images.Count > 0) return $"🖼  {images.Count} immagine/i ({Path.GetFileName(images[0])})";
+            }
+            if (Clipboard.GetData("PNG") is MemoryStream || Clipboard.ContainsImage()) return "🖼  un'immagine";
+            if (Clipboard.ContainsText())
+            {
+                var t = Clipboard.GetText().Trim().Replace("\r", " ").Replace("\n", " ");
+                if (t.Length == 0) return null;
+                return "«" + (t.Length > 70 ? t[..70] + "…" : t) + "»";
+            }
+        }
+        catch
+        {
+            // Appunti occupati da un'altra app: si riprova al prossimo clic.
+        }
+        return null;
+    }
+
+    private void PasteAs(Note note, string label)
+    {
+        string? saved;
+        try
+        {
+            saved = PasteImage(note, label) ?? PasteText(note, label);
         }
         catch (Exception ex)
         {
@@ -514,9 +602,77 @@ public partial class MainWindow : Window
                 "oppure tasto destro sull'immagine → «Copia immagine».", "MeNoter");
             return;
         }
-        ShowNote(_current, selectFile: saved);
+        // Risposta arrivata: la richiesta non è più in attesa.
+        var pending = note.Meta.Pending.FirstOrDefault(p => p.Label == label);
+        if (pending != null) note.Meta.Pending.Remove(pending);
+        note.Save();
+        if (_current == note) ShowNote(note, selectFile: saved);
         ClaudeHint.Text = Note.IsImage(saved) ? $"Immagine salvata in «{label}»." : $"Risposta salvata come «{label}».";
         RequestSync();
+    }
+
+    /// <summary>Riquadri delle richieste in attesa: clic = incolla lì, tasto destro = togli.</summary>
+    private void UpdatePending(Note note)
+    {
+        PendingPanel.Children.Clear();
+        foreach (var p in note.Meta.Pending.OrderBy(p => p.SentAt))
+        {
+            var b = new Button
+            {
+                Content = $"⏳  {p.Label} · {p.SentAt:HH:mm}",
+                ToolTip = "Clic: incolla qui quello che hai copiato da Claude. Tasto destro: togli dalla lista.",
+                Background = (System.Windows.Media.Brush)FindResource("VioletSoft"),
+            };
+            var label = p.Label;
+            b.Click += (_, _) =>
+            {
+                var preview = ClipboardPreview();
+                if (preview == null)
+                {
+                    MessageBox.Show(this, "Negli Appunti non c'è niente: in Claude premi «Copia» sotto la risposta.", "MeNoter");
+                    return;
+                }
+                if (MessageBox.Show(this, $"Salvare come «{label}»?\n\n{preview}", "MeNoter", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+                    PasteAs(note, label);
+            };
+            var remove = new MenuItem { Header = "Togli dalla lista (non serve più)" };
+            remove.Click += (_, _) =>
+            {
+                note.Meta.Pending.RemoveAll(x => x.Label == label);
+                note.Save();
+                UpdatePending(note);
+            };
+            b.ContextMenu = new ContextMenu();
+            b.ContextMenu.Items.Add(remove);
+            PendingPanel.Children.Add(b);
+        }
+        PendingBox.Visibility = note.Meta.Pending.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ---------------- Spazio per le risposte ----------------
+
+    /// <summary>
+    /// La nota occupa almeno tutta l'altezza disponibile, e le schede delle risposte hanno sempre almeno
+    /// 460 pixel: se la finestra è piccola, si scorre.
+    /// </summary>
+    private void DetailLayout_Changed(object sender, SizeChangedEventArgs e)
+    {
+        var min = DetailHeader.ActualHeight + 460;
+        var target = Math.Max(DetailPanel.ViewportHeight, min);
+        if (Math.Abs(DetailGrid.Height - target) > 1 || double.IsNaN(DetailGrid.Height)) DetailGrid.Height = target;
+    }
+
+    private void ClaudeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ClaudeCollapsed = !_settings.ClaudeCollapsed;
+        _settings.Save();
+        ApplyClaudeCollapsed();
+    }
+
+    private void ApplyClaudeCollapsed()
+    {
+        ClaudeBody.Visibility = _settings.ClaudeCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        ClaudeToggle.Content = _settings.ClaudeCollapsed ? "Mostra comandi ▾" : "Nascondi comandi ▴";
     }
 
     private string? PasteText(Note note, string label)
@@ -635,8 +791,9 @@ public partial class MainWindow : Window
         if (note.Meta.TwoTracks && note.Meta.MicName != null)
             info += $"   ·   🎙 {note.Meta.MicName}   🎧 {note.Meta.OutputName}";
         SubtitleText.Text = info;
-        if (_busyNote == note) ProgressPanel.Visibility = Visibility.Visible;
+        if (_busyNote == note) ShowProgress(note, _busyText, _busyValue);
         else HideProgress();
+        UpdatePending(note);
         TranscribeButton.IsEnabled = note.Meta.Status != "registrazione";
 
         ContentTabs.Items.Clear();

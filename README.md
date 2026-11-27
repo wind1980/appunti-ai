@@ -4,6 +4,15 @@ App Android personale: registra o importa un audio, lo trascrive **sul telefono*
 
 ## MeNoter per Windows – registrare le chiamate
 
+**Novità della 0.5 (Windows)**
+- **Più spazio per le risposte**: la nota aperta scorre, e le schede di trascrizione e risposte hanno sempre almeno
+  460 pixel anche con la finestra piccola. I comandi per Claude si nascondono con «Nascondi comandi».
+- **Trascrizione sempre visibile**: un riquadro sopra «Importa audio» mostra la trascrizione in corso (nota, percentuale,
+  tempo che manca) qualunque nota sia aperta; un clic riapre quella nota, dove la barra è aggiornata.
+- **Incolla risposta più chiaro**: ogni richiesta mandata a Claude resta tra le «In attesa della risposta di Claude»
+  (con l'ora). «Incolla risposta…» mostra cosa c'è negli Appunti (testo o immagine) e chiede a quale richiesta
+  appartiene, con quelle in attesa in cima; si può anche cliccare direttamente la richiesta in attesa.
+
 **Novità della 0.4 (Windows)**
 - **Icona di MeNoter** (la stessa dell'app Android) sul programma, sulla finestra, nella barra delle applicazioni e
   nell'intestazione; in Impostazioni un pulsante la mette sul Desktop e nel menu Start.

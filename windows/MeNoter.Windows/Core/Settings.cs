@@ -35,6 +35,9 @@ public class Settings
     /// <summary>Cartella scelta a mano per un servizio (se vuota si usa quella trovata da sola).</summary>
     public Dictionary<string, string> SyncFolders { get; set; } = new();
 
+    /// <summary>Comandi per Claude nascosti nella nota (più spazio per le risposte).</summary>
+    public bool ClaudeCollapsed { get; set; }
+
     /// <summary>Ingrandimento del testo di risposte e trascrizione (1 = normale).</summary>
     public double TextZoom { get; set; } = 1.0;
 
