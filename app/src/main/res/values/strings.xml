@@ -3,4 +3,6 @@
     <string name="app_name">MeNoter</string>
     <string name="share_audio_label">Trascrivi con MeNoter</string>
     <string name="share_text_label">Salva in MeNoter</string>
+    <string name="a11y_label">MeNoter – registrazione delle chiamate</string>
+    <string name="a11y_description">Permette a MeNoter di registrare dal microfono anche durante le chiamate (Teams, WhatsApp, Meet, Webex, telefono), come promemoria personale. MeNoter non legge e non tocca nulla sullo schermo: guarda solo quale app è in primo piano per dare il nome alla chiamata e proporti di registrarla.</string>
 </resources>

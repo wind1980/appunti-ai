@@ -142,6 +142,19 @@ class Prefs(context: Context) {
         get() = sp.getString("whisper_hint", "") ?: ""
         set(v) = sp.edit().putString("whisper_hint", v).apply()
 
+    /** Quando inizia una chiamata, una notifica propone di registrarla. */
+    var offerCallRecording: Boolean
+        get() = sp.getBoolean("offer_call_recording", true)
+        set(v) = sp.edit().putBoolean("offer_call_recording", v).apply()
+
+    /**
+     * Durante una chiamata registrata con auricolare, cuffie o Bluetooth, mette da solo il vivavoce
+     * (unico modo per registrare anche gli altri). Se è spento arriva una notifica con il pulsante.
+     */
+    var autoSpeaker: Boolean
+        get() = sp.getBoolean("auto_speaker", false)
+        set(v) = sp.edit().putBoolean("auto_speaker", v).apply()
+
     /** Manda sempre la trascrizione come file .txt invece che nel testo del messaggio. */
     var alwaysAsFile: Boolean
         get() = sp.getBoolean("always_file", false)

@@ -44,6 +44,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import it.edoardo.appunti.audio.CallMonitor
+import it.edoardo.appunti.audio.CallStatus
 import it.edoardo.appunti.audio.RecState
 import it.edoardo.appunti.audio.RecorderService
 import it.edoardo.appunti.data.Transcript
@@ -125,6 +127,10 @@ fun RecordingScreen(rec: RecState) {
             color = cs.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        rec.call?.let {
+            Spacer(Modifier.height(16.dp))
+            CallStatusCard(it)
+        }
         Spacer(Modifier.weight(1f))
 
         Row(
@@ -173,4 +179,65 @@ private fun RoundAction(icon: ImageVector, label: String, size: Dp, filled: Bool
         Spacer(Modifier.height(8.dp))
         Text(label, style = MaterialTheme.typography.labelLarge, color = cs.onSurface)
     }
+}
+
+/** Riquadro con lo stato della chiamata: cosa si sta registrando e come registrare anche gli altri. */
+@Composable
+fun CallStatusCard(call: CallStatus, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val (ok, title, text) = when {
+        call.inCall && !call.accessibilityOn -> Triple(
+            false, "Durante la chiamata registro solo silenzio",
+            "Android lascia registrare durante le chiamate solo ai servizi di accessibilità. Attiva «MeNoter – registrazione delle chiamate».",
+        )
+        call.silenced -> Triple(
+            false, "Non ricevo audio",
+            "Un'altra app sta usando il microfono in esclusiva. La registrazione continua e riprende da sola.",
+        )
+        call.inCall && !call.othersAudible -> Triple(
+            false, "Registro solo la tua voce",
+            "La chiamata${call.app?.let { " su $it" } ?: ""} esce da ${call.route.label}: gli altri non arrivano al microfono. Con il vivavoce registro anche loro.",
+        )
+        call.inCall -> Triple(
+            true, "Registro la chiamata${call.app?.let { " su $it" } ?: ""}",
+            "Vivavoce attivo: registro la tua voce e quella degli altri. Puoi cambiare uscita quando vuoi, la registrazione non si interrompe.",
+        )
+        else -> return
+    }
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (ok) cs.primaryContainer else cs.tertiaryContainer)
+            .padding(16.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = if (ok) cs.onPrimaryContainer else cs.onTertiaryContainer)
+        Spacer(Modifier.height(4.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = if (ok) cs.onPrimaryContainer else cs.onTertiaryContainer)
+        if (!ok) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (call.inCall && !call.accessibilityOn) {
+                    SmallAction("Attiva") { context.startActivity(CallMonitor.accessibilitySettings()) }
+                } else if (call.inCall && !call.othersAudible) {
+                    SmallAction("Metti il vivavoce") { RecorderService.speaker(context) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmallAction(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = Color.White,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(BrandGradient)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }

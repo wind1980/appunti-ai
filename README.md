@@ -1,4 +1,4 @@
-# MeNoter – versione 0.10 (Android) · 0.4 (Windows)
+# MeNoter – versione 0.11 (Android) · 0.4 (Windows)
 
 App Android personale: registra o importa un audio, lo trascrive **sul telefono** con whisper.cpp e manda la trascrizione all'app **Claude** (piano Pro) per riassunti, traduzioni, mappe e domande. Nessun server, nessuna API, l'audio non esce dal telefono.
 
@@ -60,6 +60,25 @@ Windows": *Ulteriori informazioni → Esegui comunque* (l'app non è firmata).
 È pensata come blocco note personale delle chiamate a cui partecipi. Registrare una conversazione a cui
 partecipi è in genere lecito in Italia, diffonderla no; al lavoro valgono anche le regole aziendali, e con
 partecipanti in altri Paesi possono servire il consenso o un avviso.
+
+## Novità della 0.11 (Android) – registrare le chiamate
+
+- **Registrazione durante le chiamate** di Teams, WhatsApp, Meet, Webex, Zoom e telefono. Android, durante una chiamata,
+  lascia usare il microfono solo all'app della chiamata e ai **servizi di accessibilità**: MeNoter ne ha uno
+  («MeNoter – registrazione delle chiamate», da attivare una volta in Impostazioni › Accessibilità; non legge e non
+  tocca nulla sullo schermo). Se l'interruttore è grigio: Impostazioni › App › MeNoter › ⋮ › «Consenti impostazioni con limitazioni».
+- **La registrazione non si perde cambiando uscita** (vivavoce, auricolare, cuffie, Bluetooth, auto): se Android chiude
+  il microfono MeNoter lo riapre da sola e riempie il buco di silenzio, così i minuti restano giusti. A inizio e fine
+  chiamata il microfono si riapre con la sorgente adatta.
+- **Cosa si registra**: la tua voce sempre; **la voce degli altri solo quando esce dal vivavoce**. Con auricolare,
+  cuffie, auricolari Bluetooth o auto la voce degli altri non arriva al microfono e Android non la lascia prendere in
+  digitale a nessuna app (solo alle app di sistema). MeNoter lo controlla ogni secondo e:
+  - mostra nella schermata di registrazione cosa sta registrando, con il pulsante **Metti il vivavoce**;
+  - manda un **avviso** con il pulsante Vivavoce quando gli altri non si sentono, e uno se Android le dà solo silenzio;
+  - oppure, con **Vivavoce automatico** (Impostazioni › Registrare le chiamate), passa da solo al vivavoce e a fine
+    chiamata torna come prima.
+- **Proposta di registrare**: quando inizia una chiamata arriva una notifica «Chiamata in corso su Teams/WhatsApp/…»
+  con il pulsante Registra; la nota si chiama «Chiamata Teams …».
 
 ## Novità della 0.10 (funzioni prese da HiNoter)
 

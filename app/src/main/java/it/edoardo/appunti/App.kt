@@ -24,11 +24,17 @@ class App : Application() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_TRANSCRIPTION, "Trascrizione", NotificationManager.IMPORTANCE_LOW)
         )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_CALLS, "Chiamate", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Proposta di registrare una chiamata e avvisi su cosa si riesce a registrare"
+            }
+        )
     }
 
     companion object {
         const val CHANNEL_RECORDING = "recording"
         const val CHANNEL_TRANSCRIPTION = "transcription"
+        const val CHANNEL_CALLS = "calls"
     }
 }
 
